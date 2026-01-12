@@ -1,0 +1,52 @@
+# Virtual environment
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.Python
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Google credentials (sensitive!)
+credentials.json
+token.json
+*.json.backup
+
+# Logs
+logs/
+*.log
+
+# SQLite database (cache)
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg

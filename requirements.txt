@@ -1,0 +1,22 @@
+# Telegram Bot
+aiogram==3.4.1
+aiohttp==3.9.1
+
+# Google Sheets API
+google-api-python-client==2.111.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.0
+
+# Configuration
+python-dotenv==1.0.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# SQLite async
+aiosqlite==0.19.0
+
+# Scheduler for cache sync
+apscheduler==3.10.4
+
+# Logging
+loguru==0.7.2
