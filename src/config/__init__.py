@@ -9,7 +9,8 @@ from src.config.sheets_config import (
     EXPENSES,
     PURE_INCOME,
     GENERAL,
-    PAYMENTS,
+    GENERAL_PL,
+    GENERAL_DATA,
     CATEGORIES,
 )
 
@@ -24,6 +25,7 @@ __all__ = [
     "EXPENSES",
     "PURE_INCOME",
     "GENERAL",
-    "PAYMENTS",
+    "GENERAL_PL",
+    "GENERAL_DATA",
     "CATEGORIES",
 ]

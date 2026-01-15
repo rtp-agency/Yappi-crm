@@ -19,6 +19,7 @@ class SheetConfig:
     id_column: str = "A"
     data_columns: str = "B:Z"
     start_row: int = 2
+    check_column: str = None  # Column to check for empty rows (if None, uses data_start_col)
     columns: List[str] = field(default_factory=list)
     protected_columns: List[str] = field(default_factory=list)
     skip_rows: List[int] = field(default_factory=list)  # Rows to skip when writing
@@ -47,9 +48,10 @@ DESIGNER_DATA = SheetConfig(
     name="Дизайнер DATA",
     id_column="A",
     data_columns="F:K",
-    start_row=19,  # Данные начинаются с 19 строки
+    start_row=15,  # Данные начинаются с 15 строки
+    check_column="G",  # Проверяем по колонке G (Ник дизайнера)
     protected_columns=["B", "C", "D", "E"],  # Charts area
-    skip_rows=[20],  # Пропускать строку 20
+    skip_rows=[],  # Нет пропускаемых строк
     columns=[
         "operation_id",  # A
         # B, C, D, E - protected (charts)
@@ -65,46 +67,35 @@ DESIGNER_DATA = SheetConfig(
 CLIENTS_DATA = SheetConfig(
     name="Заказчики DATA",
     id_column="A",
-    data_columns="F:L",  # F-I are formulas, J is manual payment, K-L are formula results
-    start_row=13,  # Rows 9-12 have existing data, bot writes from row 13
+    data_columns="F:L",  # F-L data columns
+    start_row=9,  # Данные начинаются с 9 строки
+    check_column="G",  # Проверяем по колонке G (Ник заказчика)
     protected_columns=["B", "C", "D", "E"],  # Info area (ЯНВАРЬ, ИНФО, dates, currency)
     columns=[
-        # Note: This sheet uses formulas to pull data from "Дизайнер DATA"
-        # F = date (formula)
-        # G = client name (formula)
-        # H = client status (formula: white/black list)
-        # I = order amount (formula)
-        # J = actual payment (MANUAL INPUT - only column bot writes to)
-        # K = debt (formula: I - J)
-        # L = overpayment (formula)
-        "date",          # F - formula from Дизайнер DATA
-        "client",        # G - formula from Дизайнер DATA
-        "status",        # H - formula (white/black list)
-        "amount",        # I - formula from Дизайнер DATA
-        "paid",          # J - MANUAL INPUT (фактическая оплата)
-        "debt",          # K - formula (I - J, долг)
-        "overpaid",      # L - formula (переплата)
+        "date",          # F - дата
+        "client",        # G - ник заказчика
+        "status",        # H - статус (white/black list)
+        "amount",        # I - сумма заказа
+        "paid",          # J - фактическая оплата
+        "debt",          # K - долг
+        "overpaid",      # L - переплата
     ]
 )
 
 EXPENSES = SheetConfig(
     name="Расходы",
     id_column="A",
-    data_columns="F:H",  # F-H are manual input, I-K are formulas
-    start_row=12,  # Row 11 = headers, data starts from row 12
+    data_columns="F:K",  # F-K: F=date, G=category, H=amount, I=designer, J=designer_amount, K=total
+    start_row=12,  # Данные начинаются с 12 строки
+    check_column="G",  # Проверяем по колонке G (Категория расходов) - для обычных расходов
     protected_columns=["B", "C", "D", "E"],  # Don't touch these
     columns=[
-        # A = operation_id
-        # B-E = protected (charts/info area)
-        # F = Дата заполнения (manual)
-        # G = Категория текущих расходов (manual)
-        # H = Сумма текущих расходов (manual)
-        # I = Ник дизайнера (formula from Дизайнер DATA)
-        # J = Сумма оплаты дизайнерам (formula)
-        # K = Итоговые расходы (formula: J+H)
-        "date",          # F - manual
-        "category",      # G - manual
-        "amount",        # H - manual
+        "date",             # F - дата
+        "category",         # G - категория расходов (для обычных расходов)
+        "amount",           # H - сумма (для обычных расходов)
+        "designer",         # I - ник дизайнера (для выплат дизайнерам)
+        "designer_amount",  # J - сумма оплаты дизайнерам
+        "total",            # K - итоговый расход (формула)
     ]
 )
 
@@ -112,81 +103,71 @@ PURE_INCOME = SheetConfig(
     name="Чистый доход",
     id_column="A",
     data_columns="F:H",  # Bot writes F (date), G (category), H (amount)
-    start_row=14,  # Rows 10-13 have existing data, bot writes from row 14
-    protected_columns=["B", "C", "D", "E"],  # Info area (ЯНВАРЬ, ИНФО, etc.)
+    start_row=10,  # Данные начинаются с 10 строки
+    check_column="G",  # Проверяем по колонке G (Категория дохода)
+    protected_columns=["B", "C", "D", "E"],  # Info area
     columns=[
-        # A = operation_id
-        # B-E = protected (info area)
-        # F = Дата заполнения (manual)
-        # G = Категория доп дохода (manual)
-        # H = Выручка с доп дохода (manual)
-        # I = Ник дизайнера (formula from Дизайнер DATA)
-        # J = Выручка с дизайнеров (formula)
-        # K = Итоговая выручка (formula: J+H)
-        "date",          # F - manual
-        "category",      # G - manual
-        "amount",        # H - manual
+        "date",          # F - дата
+        "category",      # G - категория дохода
+        "amount",        # H - сумма дохода
     ]
 )
 
-GENERAL = SheetConfig(
+# GENERAL имеет два раздела:
+# 1. P&L (B-E) - с 13 строки, проверяем по B
+# 2. Data (G-U) - с 9 строки, проверяем по G
+
+GENERAL_PL = SheetConfig(
     name="GENERAL",
-    id_column="A",  # operation_id in hidden column A
-    data_columns="G:U",  # Итоговая таблица
-    start_row=13,  # Rows 9-12 = formulas, bot writes from row 13+
-    protected_columns=["B", "C", "D", "E"],  # P&L area (don't touch)
-    skip_rows=[9, 10, 11, 12],  # Формулы - не трогать!
+    id_column="A",
+    data_columns="B:E",  # P&L columns
+    start_row=13,  # P&L данные начинаются с 13 строки
+    check_column="B",  # Проверяем по колонке B (дата)
+    protected_columns=[],
     columns=[
-        # GENERAL лист заполняется ФОРМУЛАМИ из других листов
-        # Бот НЕ пишет сюда напрямую, только читает для аналитики
-        #
-        # Summary cells (строка 4):
-        # G4 = Выручка (revenue)
-        # I4 = Затраты (expenses)
-        # K4 = Прибыль (profit)
-        # M4 = Маржинальность (margin %)
-        #
-        # Columns G-U (Итоговая таблица):
-        "date",              # G - ='Дизайнер DATA'!F (дата)
-        "designer",          # H - ='Дизайнер DATA'!G (дизайнер)
-        "client",            # I - ='Дизайнер DATA'!H (заказчик)
-        "order_amount",      # J - ='Дизайнер DATA'!I (стоимость заказа)
-        "paid",              # K - ='Заказчики DATA'!J (фактическая оплата)
-        "debt",              # L - ='Заказчики DATA'!K (долг)
-        "overpaid",          # M - ='Заказчики DATA'!L (переплата)
-        "designer_percent",  # N - формула: % дизайнера
-        "designer_salary",   # O - оклад дизайнера
-        "pure_category",     # P - ='Чистый доход'!G (категория)
-        "pure_amount",       # Q - ='Чистый доход'!H (сумма)
-        "expense_category",  # R - ='Расходы'!G (категория расхода)
-        "expense_amount",    # S - ='Расходы'!H (сумма расхода)
-        "balance_1",         # T - формула: остаток на 1 счете
-        "balance_2",         # U - остаток на 2 счете
+        "date",      # B - дата (DD.MM)
+        "revenue",   # C - выручка
+        "expense",   # D - расходы
+        "profit",    # E - прибыль
     ]
 )
 
-PAYMENTS = SheetConfig(
-    name="Оплаты",
+GENERAL_DATA = SheetConfig(
+    name="GENERAL",
     id_column="A",
-    data_columns="B:F",
-    start_row=2,
+    data_columns="G:U",  # Data columns
+    start_row=9,  # Data данные начинаются с 9 строки
+    check_column="G",  # Проверяем по колонке G (дата)
+    protected_columns=[],
     columns=[
-        "operation_id",  # A
-        "date",          # B
-        "client",        # C
-        "order_id",      # D
-        "payment_type",  # E
-        "amount",        # F
+        "date",              # G - дата (DD.MM)
+        "designer",          # H - дизайнер
+        "client",            # I - заказчик
+        "order_amount",      # J - сумма заказа
+        "paid",              # K - фактическая оплата
+        "debt",              # L - долг
+        "overpaid",          # M - переплата
+        "designer_percent",  # N - % дизайнера
+        "designer_salary",   # O - оклад дизайнера
+        "pure_category",     # P - категория чистого дохода
+        "pure_amount",       # Q - сумма чистого дохода
+        "expense_category",  # R - (пусто)
+        "expense_amount",    # S - сумма расхода
+        "balance_1",         # T - (пусто - формула)
+        "balance_2",         # U - резервный кошелёк
     ]
 )
+
+# Legacy alias for backward compatibility
+GENERAL = GENERAL_DATA
 
 CATEGORIES = SheetConfig(
     name="Категории",
     id_column="A",
     data_columns="B:E",
     start_row=2,
+    check_column="B",  # Проверяем по колонке B (тип)
     columns=[
-        "operation_id",  # A
         "type",          # B - "designer" / "client" / "expense" / "income"
         "name",          # C
         "status",        # D - "active" / "whitelist" / "blacklist"
@@ -204,8 +185,9 @@ SHEETS_CONFIG: Dict[str, SheetConfig] = {
     "clients_data": CLIENTS_DATA,
     "expenses": EXPENSES,
     "pure_income": PURE_INCOME,
-    "general": GENERAL,
-    "payments": PAYMENTS,
+    "general": GENERAL,  # Alias для GENERAL_DATA
+    "general_pl": GENERAL_PL,  # P&L секция (B-E, start_row=13)
+    "general_data": GENERAL_DATA,  # Data секция (G-U, start_row=9)
     "categories": CATEGORIES,
 }
 

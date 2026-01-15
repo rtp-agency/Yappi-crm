@@ -26,11 +26,11 @@ class DesignerOrderStates(StatesGroup):
     # Step 6 alt: Enter designer salary (for salary model)
     waiting_for_salary = State()
 
-    # Step 7: Confirm order
-    waiting_for_confirmation = State()
+    # Step 7: Enter actual payment from client
+    waiting_for_actual_payment = State()
 
-    # Step 8: Test mode - confirm or delete test data
-    waiting_for_test_confirmation = State()
+    # Step 8: Confirm order
+    waiting_for_confirmation = State()
 
 
 class PureOrderStates(StatesGroup):
@@ -42,14 +42,14 @@ class PureOrderStates(StatesGroup):
     # Step 2: Enter order amount
     waiting_for_amount = State()
 
-    # Step 3: Select wallet
+    # Step 3: Enter actual payment from client
+    waiting_for_actual_payment = State()
+
+    # Step 4: Select wallet
     waiting_for_wallet = State()
 
-    # Step 4: Confirm
+    # Step 5: Confirm
     waiting_for_confirmation = State()
-
-    # Step 5: Test mode - confirm or delete
-    waiting_for_test_confirmation = State()
 
 
 class PureIncomeStates(StatesGroup):
@@ -64,9 +64,6 @@ class PureIncomeStates(StatesGroup):
     # Step 3: Confirm
     waiting_for_confirmation = State()
 
-    # Step 4: Test mode - confirm or delete
-    waiting_for_test_confirmation = State()
-
 
 class PaymentStates(StatesGroup):
     """States for adding payment from client."""
@@ -80,9 +77,6 @@ class PaymentStates(StatesGroup):
     # Step 3: Confirm payment distribution
     waiting_for_confirmation = State()
 
-    # Step 4: Test mode - confirm or rollback
-    waiting_for_test_confirmation = State()
-
 
 class ExpenseStates(StatesGroup):
     """States for adding expense."""
@@ -95,9 +89,6 @@ class ExpenseStates(StatesGroup):
 
     # Step 3: Confirm
     waiting_for_confirmation = State()
-
-    # Step 4: Test mode - confirm or delete
-    waiting_for_test_confirmation = State()
 
 
 class AddClientStates(StatesGroup):

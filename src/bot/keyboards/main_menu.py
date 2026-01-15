@@ -32,10 +32,6 @@ def get_main_menu() -> ReplyKeyboardMarkup:
         KeyboardButton(text="💸 Расходы"),
         KeyboardButton(text="⚠️ Долги/Листы")
     )
-    builder.row(
-        KeyboardButton(text="📈 Аналитика"),
-        KeyboardButton(text="⚙️ Настройки")
-    )
 
     return builder.as_markup(resize_keyboard=True)
 
@@ -124,6 +120,16 @@ def get_confirm_keyboard() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm"),
         InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
+    )
+    return builder.as_markup()
+
+
+def get_test_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Test mode confirmation keyboard - keep or delete data."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ Оставить данные", callback_data="test:keep"),
+        InlineKeyboardButton(text="🗑 Удалить данные", callback_data="test:delete")
     )
     return builder.as_markup()
 

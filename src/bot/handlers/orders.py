@@ -81,7 +81,7 @@ async def back_to_order_type(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("model:"), DesignerOrderStates.waiting_for_model)
 async def select_model(callback: CallbackQuery, state: FSMContext):
-    """Model selected - ask for designer name."""
+    """Model selected - show designer selection."""
     model = callback.data.split(":")[1]  # "percent" or "salary"
 
     await state.update_data(model=model)
@@ -89,7 +89,106 @@ async def select_model(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         f"🎨 <b>Дизайнерский заказ</b>\n"
         f"Модель: {'Процентная (%)' if model == 'percent' else 'Окладная'}\n\n"
-        "Введите <b>имя дизайнера</b>:",
+        "⏳ Загрузка списка дизайнеров...",
+        parse_mode="HTML"
+    )
+
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+        designers = await sheets.get_all_designers()
+
+        if designers:
+            await callback.message.edit_text(
+                f"🎨 <b>Дизайнерский заказ</b>\n"
+                f"Модель: {'Процентная (%)' if model == 'percent' else 'Окладная'}\n\n"
+                "Выберите <b>дизайнера</b> из списка:",
+                reply_markup=get_designers_keyboard(designers),
+                parse_mode="HTML"
+            )
+        else:
+            await callback.message.edit_text(
+                f"🎨 <b>Дизайнерский заказ</b>\n"
+                f"Модель: {'Процентная (%)' if model == 'percent' else 'Окладная'}\n\n"
+                "Дизайнеры не найдены. Введите <b>имя дизайнера</b>:",
+                reply_markup=get_cancel_keyboard(),
+                parse_mode="HTML"
+            )
+            await state.set_state(DesignerOrderStates.waiting_for_designer)
+            await callback.answer()
+            return
+
+    except Exception as e:
+        logger.error(f"Error loading designers: {e}")
+        await callback.message.edit_text(
+            f"🎨 <b>Дизайнерский заказ</b>\n"
+            f"Модель: {'Процентная (%)' if model == 'percent' else 'Окладная'}\n\n"
+            "Не удалось загрузить список. Введите <b>имя дизайнера</b>:",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(DesignerOrderStates.waiting_for_designer)
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("select_designer:"))
+async def designer_selected_from_list(callback: CallbackQuery, state: FSMContext):
+    """Designer selected from list - show client selection."""
+    designer = callback.data.split(":", 1)[1]
+    await state.update_data(designer=designer)
+
+    await callback.message.edit_text(
+        f"✅ Дизайнер: <b>{designer}</b>\n\n"
+        "⏳ Загрузка списка заказчиков...",
+        parse_mode="HTML"
+    )
+
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+        clients = await sheets.get_all_clients()
+
+        if clients:
+            await callback.message.edit_text(
+                f"✅ Дизайнер: <b>{designer}</b>\n\n"
+                "Выберите <b>заказчика</b> из списка:",
+                reply_markup=get_clients_keyboard(clients),
+                parse_mode="HTML"
+            )
+        else:
+            await callback.message.edit_text(
+                f"✅ Дизайнер: <b>{designer}</b>\n\n"
+                "Заказчики не найдены. Введите <b>имя заказчика</b>:",
+                reply_markup=get_cancel_keyboard(),
+                parse_mode="HTML"
+            )
+            await state.set_state(DesignerOrderStates.waiting_for_client)
+
+    except Exception as e:
+        logger.error(f"Error loading clients: {e}")
+        await callback.message.edit_text(
+            f"✅ Дизайнер: <b>{designer}</b>\n\n"
+            "Не удалось загрузить список. Введите <b>имя заказчика</b>:",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(DesignerOrderStates.waiting_for_client)
+
+    await callback.answer()
+
+
+@router.callback_query(F.data == "designer:manual")
+async def designer_manual_entry(callback: CallbackQuery, state: FSMContext):
+    """User wants to enter designer name manually."""
+    data = await state.get_data()
+    model = data.get("model", "percent")
+
+    await callback.message.edit_text(
+        f"🎨 <b>Дизайнерский заказ</b>\n"
+        f"Модель: {'Процентная (%)' if model == 'percent' else 'Окладная'}\n\n"
+        "Введите <b>имя нового дизайнера</b>:\n"
+        "<i>(будет автоматически добавлен в базу)</i>",
         reply_markup=get_cancel_keyboard(),
         parse_mode="HTML"
     )
@@ -99,7 +198,7 @@ async def select_model(callback: CallbackQuery, state: FSMContext):
 
 @router.message(DesignerOrderStates.waiting_for_designer)
 async def enter_designer(message: Message, state: FSMContext):
-    """Designer name entered - ask for client name."""
+    """Designer name entered manually - add to Categories and show client selection."""
     designer = message.text.strip()
 
     if not designer:
@@ -108,18 +207,132 @@ async def enter_designer(message: Message, state: FSMContext):
 
     await state.update_data(designer=designer)
 
+    # Add new designer to Categories sheet
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+        added = await sheets.add_new_designer(designer)
+        if added:
+            logger.info(f"New designer '{designer}' added to Categories")
+    except Exception as e:
+        logger.error(f"Error adding designer to categories: {e}")
+
+    # Show client selection
     await message.answer(
-        f"✅ Дизайнер: <b>{designer}</b>\n\n"
-        "Введите <b>имя заказчика</b>:",
-        reply_markup=get_cancel_keyboard(),
+        f"✅ Дизайнер: <b>{designer}</b>\n"
+        "<i>(добавлен в базу)</i>\n\n"
+        "⏳ Загрузка списка заказчиков...",
         parse_mode="HTML"
     )
-    await state.set_state(DesignerOrderStates.waiting_for_client)
+
+    try:
+        clients = await sheets.get_all_clients()
+
+        if clients:
+            await message.answer(
+                f"✅ Дизайнер: <b>{designer}</b>\n\n"
+                "Выберите <b>заказчика</b> из списка:",
+                reply_markup=get_clients_keyboard(clients),
+                parse_mode="HTML"
+            )
+        else:
+            await message.answer(
+                f"✅ Дизайнер: <b>{designer}</b>\n\n"
+                "Заказчики не найдены. Введите <b>имя заказчика</b>:",
+                reply_markup=get_cancel_keyboard(),
+                parse_mode="HTML"
+            )
+            await state.set_state(DesignerOrderStates.waiting_for_client)
+
+    except Exception as e:
+        logger.error(f"Error loading clients: {e}")
+        await message.answer(
+            f"✅ Дизайнер: <b>{designer}</b>\n\n"
+            "Введите <b>имя заказчика</b>:",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(DesignerOrderStates.waiting_for_client)
+
+
+@router.callback_query(F.data.startswith("select_client:"))
+async def client_selected_from_list(callback: CallbackQuery, state: FSMContext):
+    """Client selected from list - check context and handle accordingly."""
+    client_name = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+
+    # Check if we're in designer order flow (model is set)
+    if "model" in data:
+        # Designer order flow - ask for amount
+        await state.update_data(client=client_name)
+        await callback.message.edit_text(
+            f"✅ Дизайнер: <b>{data.get('designer', '?')}</b>\n"
+            f"✅ Заказчик: <b>{client_name}</b>\n\n"
+            "Введите <b>сумму заказа</b> (в $):",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(DesignerOrderStates.waiting_for_amount)
+        await callback.answer()
+    elif data.get("is_pure_order"):
+        # Pure order flow - ask for amount
+        await state.update_data(client=client_name)
+        await callback.message.edit_text(
+            f"💎 <b>Чистый заказ агентства</b>\n\n"
+            f"✅ Заказчик: <b>{client_name}</b>\n\n"
+            "Введите <b>сумму заказа</b> (в $):",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(PureOrderStates.waiting_for_amount)
+        await callback.answer()
+    else:
+        # Payment flow - show orders with debt
+        await process_client_selection(callback.message, state, client_name, is_callback=True)
+        await callback.answer()
+
+
+@router.callback_query(F.data == "client:manual")
+async def client_manual_entry(callback: CallbackQuery, state: FSMContext):
+    """User wants to enter client name manually - check context."""
+    data = await state.get_data()
+
+    if "model" in data:
+        # Designer order flow
+        await callback.message.edit_text(
+            f"✅ Дизайнер: <b>{data.get('designer', '?')}</b>\n\n"
+            "Введите <b>имя нового заказчика</b>:\n"
+            "<i>(будет автоматически добавлен в базу)</i>",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(DesignerOrderStates.waiting_for_client)
+    elif data.get("is_pure_order"):
+        # Pure order flow
+        await callback.message.edit_text(
+            "💎 <b>Чистый заказ агентства</b>\n\n"
+            "Введите <b>имя нового заказчика</b>:\n"
+            "<i>(будет автоматически добавлен в базу)</i>",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(PureOrderStates.waiting_for_client)
+    else:
+        # Payment flow
+        await callback.message.edit_text(
+            "💰 <b>Оплата от заказчика</b>\n\n"
+            "Введите <b>имя заказчика</b>:",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(PaymentStates.waiting_for_client)
+
+    await callback.answer()
 
 
 @router.message(DesignerOrderStates.waiting_for_client)
 async def enter_client(message: Message, state: FSMContext):
-    """Client name entered - ask for amount."""
+    """Client name entered manually - add to Categories and ask for amount."""
     client = message.text.strip()
 
     if not client:
@@ -128,8 +341,21 @@ async def enter_client(message: Message, state: FSMContext):
 
     await state.update_data(client=client)
 
+    # Add new client to Categories sheet
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+        added = await sheets.add_new_client(client)
+        if added:
+            logger.info(f"New client '{client}' added to Categories")
+    except Exception as e:
+        logger.error(f"Error adding client to categories: {e}")
+
+    data = await state.get_data()
     await message.answer(
-        f"✅ Заказчик: <b>{client}</b>\n\n"
+        f"✅ Дизайнер: <b>{data.get('designer', '?')}</b>\n"
+        f"✅ Заказчик: <b>{client}</b>\n"
+        "<i>(добавлен в базу)</i>\n\n"
         "Введите <b>сумму заказа</b> (в $):",
         reply_markup=get_cancel_keyboard(),
         parse_mode="HTML"
@@ -171,7 +397,7 @@ async def enter_amount(message: Message, state: FSMContext):
 
 @router.message(DesignerOrderStates.waiting_for_percent)
 async def enter_percent(message: Message, state: FSMContext):
-    """Percent entered - show confirmation."""
+    """Percent entered - ask for actual payment."""
     try:
         percent = float(message.text.strip().replace("%", "").replace(",", "."))
         if percent < 0 or percent > 100:
@@ -192,26 +418,22 @@ async def enter_percent(message: Message, state: FSMContext):
         agency_income=agency_income
     )
 
-    # Show confirmation
+    # Ask for actual payment
     await message.answer(
-        "📋 <b>ПОДТВЕРЖДЕНИЕ ЗАКАЗА</b>\n\n"
-        f"🎨 Дизайнер: <b>{data['designer']}</b>\n"
-        f"👤 Заказчик: <b>{data['client']}</b>\n"
-        f"📊 Модель: <b>Процентная</b>\n"
-        f"💰 Сумма заказа: <b>${data['amount']:.2f}</b>\n"
-        f"📈 Процент дизайнеру: <b>{percent}%</b>\n\n"
+        f"✅ Процент дизайнеру: <b>{percent}%</b>\n"
         f"💵 ЗП дизайнеру: <b>${designer_salary:.2f}</b>\n"
         f"💼 Доход агентства: <b>${agency_income:.2f}</b>\n\n"
-        "Подтвердить заказ?",
-        reply_markup=get_confirm_keyboard(),
+        f"Введите <b>фактическую оплату</b> от заказчика (в $):\n"
+        f"<i>(или 0 если оплаты ещё не было)</i>",
+        reply_markup=get_cancel_keyboard(),
         parse_mode="HTML"
     )
-    await state.set_state(DesignerOrderStates.waiting_for_confirmation)
+    await state.set_state(DesignerOrderStates.waiting_for_actual_payment)
 
 
 @router.message(DesignerOrderStates.waiting_for_salary)
 async def enter_salary(message: Message, state: FSMContext):
-    """Salary entered - show confirmation."""
+    """Salary entered - ask for actual payment."""
     try:
         salary = float(message.text.strip().replace(",", ".").replace("$", ""))
         if salary < 0:
@@ -234,15 +456,54 @@ async def enter_salary(message: Message, state: FSMContext):
         percent=0  # Not applicable for salary model
     )
 
+    # Ask for actual payment
+    await message.answer(
+        f"✅ ЗП дизайнеру: <b>${salary:.2f}</b>\n"
+        f"💼 Доход агентства: <b>${agency_income:.2f}</b>\n\n"
+        f"Введите <b>фактическую оплату</b> от заказчика (в $):\n"
+        f"<i>(или 0 если оплаты ещё не было)</i>",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="HTML"
+    )
+    await state.set_state(DesignerOrderStates.waiting_for_actual_payment)
+
+
+@router.message(DesignerOrderStates.waiting_for_actual_payment)
+async def enter_actual_payment(message: Message, state: FSMContext):
+    """Actual payment entered - show confirmation."""
+    try:
+        actual_payment = float(message.text.strip().replace(",", ".").replace("$", ""))
+        if actual_payment < 0:
+            raise ValueError("Payment must be non-negative")
+    except ValueError:
+        await message.answer("❌ Введите корректную сумму (0 или больше):")
+        return
+
+    await state.update_data(actual_payment=actual_payment)
+    data = await state.get_data()
+
+    # Calculate debt
+    debt = data["amount"] - actual_payment
+
+    model_name = "Процентная" if data["model"] == "percent" else "Окладная"
+    percent_text = f"\n📈 Процент дизайнеру: <b>{data.get('percent', 0)}%</b>" if data["model"] == "percent" else ""
+
+    debt_text = ""
+    if debt > 0:
+        debt_text = f"\n🔴 Долг заказчика: <b>${debt:.2f}</b>"
+    elif debt < 0:
+        debt_text = f"\n🟢 Переплата: <b>${abs(debt):.2f}</b>"
+
     # Show confirmation
     await message.answer(
         "📋 <b>ПОДТВЕРЖДЕНИЕ ЗАКАЗА</b>\n\n"
         f"🎨 Дизайнер: <b>{data['designer']}</b>\n"
         f"👤 Заказчик: <b>{data['client']}</b>\n"
-        f"📊 Модель: <b>Окладная</b>\n"
-        f"💰 Сумма заказа: <b>${data['amount']:.2f}</b>\n\n"
-        f"💵 ЗП дизайнеру: <b>${salary:.2f}</b>\n"
-        f"💼 Доход агентства: <b>${agency_income:.2f}</b>\n\n"
+        f"📊 Модель: <b>{model_name}</b>\n"
+        f"💰 Сумма заказа: <b>${data['amount']:.2f}</b>\n"
+        f"💵 Фактическая оплата: <b>${actual_payment:.2f}</b>{percent_text}\n\n"
+        f"💵 ЗП дизайнеру: <b>${data['designer_salary']:.2f}</b>\n"
+        f"💼 Доход агентства: <b>${data['agency_income']:.2f}</b>{debt_text}\n\n"
         "Подтвердить заказ?",
         reply_markup=get_confirm_keyboard(),
         parse_mode="HTML"
@@ -263,14 +524,21 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
     operation_id = str(uuid.uuid4())
     date_str = datetime.now().strftime("%d.%m.%Y")
 
+    actual_payment = data.get("actual_payment", 0)
+    debt = data["amount"] - actual_payment
+
     # Prepare data for Designer DATA sheet
+    # K column: 0 for percent model, salary for salary model
+    is_percent_model = data.get("model") == "percent"
+    salary_value = 0 if is_percent_model else data.get("designer_salary", 0)
+
     order_data = [
         date_str,                              # F: Дата заполнения
         data["designer"],                      # G: Ник дизайнера
         data["client"],                        # H: Ник заказчика
         data["amount"],                        # I: Стоимость заказа
         data.get("percent", 0),               # J: % дизайнера
-        data.get("designer_salary", 0),       # K: Оклад дизайнера
+        salary_value,                         # K: Оклад (0 для % модели)
     ]
 
     await callback.message.edit_text(
@@ -291,7 +559,43 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
 
         logger.info(f"Order saved to Designer DATA: row={row_num}, operation_id={operation_id}")
 
-        # 2. Write to GENERAL sheet
+        # Update F4 formula to include new row: =СУММ(I15:I{row_num})
+        await client.update_sum_formula(
+            sheet_name="Дизайнер DATA",
+            formula_cell="F4",
+            sum_column="I",
+            start_row=15,
+            end_row=row_num
+        )
+
+        # 2. Write to Заказчики DATA sheet (column J = actual payment)
+        # H column: "Black List" if debt > 0, "White List" if no debt
+        client_status = "Black List" if debt > 0 else "White List"
+        clients_data = [
+            date_str,                          # F: Дата заполнения
+            data["client"],                    # G: Заказчик
+            client_status,                     # H: White List / Black List
+            data["amount"],                    # I: Сумма заказа
+            actual_payment,                    # J: Фактическая оплата
+            debt if debt > 0 else 0,           # K: Долг
+        ]
+        await client.write_row(
+            sheet_key="clients_data",
+            operation_id=operation_id,
+            data=clients_data
+        )
+        logger.info(f"Written to Заказчики DATA: client={data['client']}, payment={actual_payment}")
+
+        # 3. Write to Чистый доход sheet (columns I, J, K for designer orders)
+        pure_income_row = await client.write_designer_to_pure_income(
+            operation_id=operation_id,
+            designer=data["designer"],
+            order_amount=data["amount"],
+            agency_income=data.get("agency_income", 0)
+        )
+        logger.info(f"Written to Чистый доход row {pure_income_row}")
+
+        # 4. Write to GENERAL sheet
         general_row = await client.write_to_general(
             operation_id=operation_id,
             date=date_str,
@@ -299,6 +603,7 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
             designer=data["designer"],
             client=data["client"],
             order_amount=data["amount"],
+            actual_payment=actual_payment,
             designer_percent=data.get("percent", 0),
             designer_salary=data.get("designer_salary", 0),
             agency_income=data.get("agency_income", 0),
@@ -306,16 +611,19 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
         )
         logger.info(f"Written to GENERAL row {general_row}")
 
+        debt_text = ""
+        if debt > 0:
+            debt_text = f"\n🔴 Долг заказчика: ${debt:.2f}"
+
+        await state.clear()
         await callback.message.edit_text(
             "✅ <b>ЗАКАЗ СОХРАНЁН!</b>\n\n"
-            f"📍 Записан в строку {row_num}\n"
-            f"🔑 ID: <code>{operation_id[:8]}...</code>\n\n"
             f"🎨 Дизайнер: {data['designer']}\n"
             f"👤 Заказчик: {data['client']}\n"
             f"💰 Сумма: ${data['amount']:.2f}\n"
+            f"💵 Фактическая оплата: ${actual_payment:.2f}{debt_text}\n"
             f"💵 ЗП дизайнеру: ${data['designer_salary']:.2f}\n"
             f"💼 Доход агентства: ${data['agency_income']:.2f}",
-            reply_markup=get_main_menu(),
             parse_mode="HTML"
         )
 
@@ -325,8 +633,8 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
             f"❌ <b>Ошибка сохранения!</b>\n\n{str(e)}",
             parse_mode="HTML"
         )
+        await state.clear()
 
-    await state.clear()
     await callback.answer("Заказ сохранён!")
 
 
@@ -343,7 +651,7 @@ async def cancel_order(callback: CallbackQuery, state: FSMContext):
 
 
 # ============================================================================
-# PLACEHOLDER FOR OTHER ADD OPERATIONS
+# PURE INCOME / PAYMENT / OTHER OPERATIONS
 # ============================================================================
 
 @router.callback_query(F.data == "add:pure_income")
@@ -403,27 +711,6 @@ async def add_payment(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("select_client:"))
-async def payment_select_client(callback: CallbackQuery, state: FSMContext):
-    """Client selected from list - show orders with debt."""
-    client_name = callback.data.split(":", 1)[1]
-    await process_client_selection(callback.message, state, client_name, is_callback=True)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "client:manual")
-async def payment_manual_client(callback: CallbackQuery, state: FSMContext):
-    """User wants to enter client name manually."""
-    await callback.message.edit_text(
-        "💰 <b>Оплата от заказчика</b>\n\n"
-        "Введите <b>имя заказчика</b>:",
-        reply_markup=get_cancel_keyboard(),
-        parse_mode="HTML"
-    )
-    await state.set_state(PaymentStates.waiting_for_client)
-    await callback.answer()
-
-
 @router.callback_query(F.data == "add:expense")
 async def add_expense(callback: CallbackQuery, state: FSMContext):
     """Start expense flow - ask for category."""
@@ -440,15 +727,51 @@ async def add_expense(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "order:pure")
 async def start_pure_order(callback: CallbackQuery, state: FSMContext):
-    """Start pure agency order - ask for client name."""
+    """Start pure agency order - show client selection."""
+    # Mark that this is a pure order flow
+    await state.update_data(is_pure_order=True)
+
     await callback.message.edit_text(
         "💎 <b>Чистый заказ агентства</b>\n\n"
         "Это заказ без дизайнера. 100% суммы идёт агентству.\n\n"
-        "Введите <b>имя заказчика</b>:",
-        reply_markup=get_cancel_keyboard(),
+        "⏳ Загрузка списка заказчиков...",
         parse_mode="HTML"
     )
-    await state.set_state(PureOrderStates.waiting_for_client)
+
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+        clients = await sheets.get_all_clients()
+
+        if clients:
+            await callback.message.edit_text(
+                "💎 <b>Чистый заказ агентства</b>\n\n"
+                "Это заказ без дизайнера. 100% суммы идёт агентству.\n\n"
+                "Выберите <b>заказчика</b> из списка:",
+                reply_markup=get_clients_keyboard(clients),
+                parse_mode="HTML"
+            )
+        else:
+            await callback.message.edit_text(
+                "💎 <b>Чистый заказ агентства</b>\n\n"
+                "Это заказ без дизайнера. 100% суммы идёт агентству.\n\n"
+                "Заказчики не найдены. Введите <b>имя заказчика</b>:",
+                reply_markup=get_cancel_keyboard(),
+                parse_mode="HTML"
+            )
+            await state.set_state(PureOrderStates.waiting_for_client)
+
+    except Exception as e:
+        logger.error(f"Error loading clients for pure order: {e}")
+        await callback.message.edit_text(
+            "💎 <b>Чистый заказ агентства</b>\n\n"
+            "Это заказ без дизайнера. 100% суммы идёт агентству.\n\n"
+            "Введите <b>имя заказчика</b>:",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(PureOrderStates.waiting_for_client)
+
     await callback.answer()
 
 
@@ -458,7 +781,7 @@ async def start_pure_order(callback: CallbackQuery, state: FSMContext):
 
 @router.message(PureOrderStates.waiting_for_client)
 async def pure_order_client(message: Message, state: FSMContext):
-    """Client name entered - ask for amount."""
+    """Client name entered manually - add to Categories and ask for amount."""
     client = message.text.strip()
 
     if not client:
@@ -467,8 +790,20 @@ async def pure_order_client(message: Message, state: FSMContext):
 
     await state.update_data(client=client)
 
+    # Add new client to Categories sheet
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+        added = await sheets.add_new_client(client)
+        if added:
+            logger.info(f"New client '{client}' added to Categories (pure order)")
+    except Exception as e:
+        logger.error(f"Error adding client to categories: {e}")
+
     await message.answer(
-        f"✅ Заказчик: <b>{client}</b>\n\n"
+        f"💎 <b>Чистый заказ агентства</b>\n\n"
+        f"✅ Заказчик: <b>{client}</b>\n"
+        "<i>(добавлен в базу)</i>\n\n"
         "Введите <b>сумму заказа</b> (в $):",
         reply_markup=get_cancel_keyboard(),
         parse_mode="HTML"
@@ -478,7 +813,7 @@ async def pure_order_client(message: Message, state: FSMContext):
 
 @router.message(PureOrderStates.waiting_for_amount)
 async def pure_order_amount(message: Message, state: FSMContext):
-    """Amount entered - ask for wallet."""
+    """Amount entered - ask for actual payment."""
     try:
         amount = float(message.text.strip().replace(",", ".").replace("$", ""))
         if amount <= 0:
@@ -491,6 +826,38 @@ async def pure_order_amount(message: Message, state: FSMContext):
 
     await message.answer(
         f"✅ Сумма заказа: <b>${amount:.2f}</b>\n\n"
+        f"Введите <b>фактическую оплату</b> от заказчика (в $):\n"
+        f"<i>(или 0 если оплаты ещё не было)</i>",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="HTML"
+    )
+    await state.set_state(PureOrderStates.waiting_for_actual_payment)
+
+
+@router.message(PureOrderStates.waiting_for_actual_payment)
+async def pure_order_actual_payment(message: Message, state: FSMContext):
+    """Actual payment entered - ask for wallet."""
+    try:
+        actual_payment = float(message.text.strip().replace(",", ".").replace("$", ""))
+        if actual_payment < 0:
+            raise ValueError("Payment must be non-negative")
+    except ValueError:
+        await message.answer("❌ Введите корректную сумму (0 или больше):")
+        return
+
+    await state.update_data(actual_payment=actual_payment)
+
+    data = await state.get_data()
+    debt = data["amount"] - actual_payment
+
+    debt_text = ""
+    if debt > 0:
+        debt_text = f"\n🔴 Долг: ${debt:.2f}"
+    elif debt < 0:
+        debt_text = f"\n🟢 Переплата: ${abs(debt):.2f}"
+
+    await message.answer(
+        f"✅ Фактическая оплата: <b>${actual_payment:.2f}</b>{debt_text}\n\n"
         "Выберите <b>кошелёк</b> для распределения дохода:",
         reply_markup=get_wallet_keyboard(),
         parse_mode="HTML"
@@ -504,6 +871,8 @@ async def pure_order_wallet(callback: CallbackQuery, state: FSMContext):
     wallet = callback.data.split(":")[1]
     data = await state.get_data()
     amount = data["amount"]
+    actual_payment = data.get("actual_payment", 0)
+    debt = amount - actual_payment
 
     if wallet == "operational":
         wallet_operational = amount
@@ -525,11 +894,18 @@ async def pure_order_wallet(callback: CallbackQuery, state: FSMContext):
         wallet_reserve=wallet_reserve
     )
 
+    debt_text = ""
+    if debt > 0:
+        debt_text = f"\n🔴 Долг заказчика: <b>${debt:.2f}</b>"
+    elif debt < 0:
+        debt_text = f"\n🟢 Переплата: <b>${abs(debt):.2f}</b>"
+
     await callback.message.edit_text(
         "📋 <b>ПОДТВЕРЖДЕНИЕ ЗАКАЗА</b>\n\n"
         f"👤 Заказчик: <b>{data['client']}</b>\n"
         f"📊 Тип: <b>Чистый заказ агентства</b>\n"
         f"💰 Сумма: <b>${amount:.2f}</b>\n"
+        f"💵 Фактическая оплата: <b>${actual_payment:.2f}</b>{debt_text}\n"
         f"💼 Кошелёк: <b>{wallet_name}</b>\n\n"
         f"💵 Операционный: <b>${wallet_operational:.2f}</b>\n"
         f"🏦 Резервный: <b>${wallet_reserve:.2f}</b>\n\n"
@@ -548,6 +924,9 @@ async def confirm_pure_order(callback: CallbackQuery, state: FSMContext):
 
     operation_id = str(uuid.uuid4())
     date_str = datetime.now().strftime("%d.%m.%Y")
+
+    actual_payment = data.get("actual_payment", 0)
+    debt = data["amount"] - actual_payment
 
     await callback.message.edit_text(
         "⏳ Сохранение заказа...",
@@ -569,6 +948,24 @@ async def confirm_pure_order(callback: CallbackQuery, state: FSMContext):
 
         logger.info(f"Pure order saved: row={row_num}, client={data['client']}, amount={data['amount']}")
 
+        # Write to Заказчики DATA sheet (column J = actual payment)
+        # H column: "Black List" if debt > 0, "White List" if no debt
+        client_status = "Black List" if debt > 0 else "White List"
+        clients_data = [
+            date_str,                          # F: Дата заполнения
+            data["client"],                    # G: Заказчик
+            client_status,                     # H: White List / Black List
+            data["amount"],                    # I: Сумма заказа
+            actual_payment,                    # J: Фактическая оплата
+            debt if debt > 0 else 0,           # K: Долг
+        ]
+        await client.write_row(
+            sheet_key="clients_data",
+            operation_id=operation_id,
+            data=clients_data
+        )
+        logger.info(f"Written to Заказчики DATA: client={data['client']}, payment={actual_payment}")
+
         wallet_operational = data.get("wallet_operational", 0)
         wallet_reserve = data.get("wallet_reserve", 0)
 
@@ -577,6 +974,8 @@ async def confirm_pure_order(callback: CallbackQuery, state: FSMContext):
             date=date_str,
             operation_type="pure_order",
             client=data["client"],
+            order_amount=data["amount"],
+            actual_payment=actual_payment,
             pure_income_category=category,
             pure_income_amount=data["amount"],
             wallet_operational=wallet_operational,
@@ -584,14 +983,17 @@ async def confirm_pure_order(callback: CallbackQuery, state: FSMContext):
         )
         logger.info(f"Written to GENERAL row {general_row}")
 
+        debt_text = ""
+        if debt > 0:
+            debt_text = f"\n🔴 Долг заказчика: ${debt:.2f}"
+
+        await state.clear()
         await callback.message.edit_text(
             "✅ <b>ЧИСТЫЙ ЗАКАЗ СОХРАНЁН!</b>\n\n"
-            f"📍 Записан в строку {row_num}\n"
-            f"🔑 ID: <code>{operation_id[:8]}...</code>\n\n"
             f"👤 Заказчик: {data['client']}\n"
             f"💰 Сумма: ${data['amount']:.2f}\n"
+            f"💵 Фактическая оплата: ${actual_payment:.2f}{debt_text}\n"
             f"📅 Дата: {date_str}",
-            reply_markup=get_main_menu(),
             parse_mode="HTML"
         )
 
@@ -601,8 +1003,8 @@ async def confirm_pure_order(callback: CallbackQuery, state: FSMContext):
             f"❌ <b>Ошибка сохранения!</b>\n\n{str(e)}",
             parse_mode="HTML"
         )
+        await state.clear()
 
-    await state.clear()
     await callback.answer("Заказ создан!")
 
 
@@ -910,10 +1312,15 @@ async def expense_confirm(callback: CallbackQuery, state: FSMContext):
     operation_id = str(uuid.uuid4())
     date_str = datetime.now().strftime("%d.%m.%Y")
 
+    # Expense data for columns F-K:
+    # F=date, G=category, H=amount, I=designer(empty), J=designer_amount(empty), K=total(formula)
     expense_data = [
-        date_str,
-        data["category"],
-        data["amount"],
+        date_str,           # F - дата
+        data["category"],   # G - категория
+        data["amount"],     # H - сумма
+        "",                 # I - ник дизайнера (пусто для обычных расходов)
+        "",                 # J - сумма дизайнеру (пусто)
+        "",                 # K - итоговый расход (формула, не трогаем)
     ]
 
     await callback.message.edit_text(
@@ -933,23 +1340,15 @@ async def expense_confirm(callback: CallbackQuery, state: FSMContext):
 
         logger.info(f"Expense saved: row={row_num}, category={data['category']}, amount={data['amount']}")
 
-        general_row = await client.write_to_general(
-            operation_id=operation_id,
-            date=date_str,
-            operation_type="expense",
-            expense_category=data["category"],
-            expense_amount=data["amount"]
-        )
-        logger.info(f"Written to GENERAL row {general_row}")
+        # NOTE: Расходы НЕ записываются в GENERAL - только в лист "Расходы"
+        # Это сделано чтобы не ломать визуальную структуру таблицы GENERAL
 
+        await state.clear()
         await callback.message.edit_text(
             "✅ <b>РАСХОД СОХРАНЁН!</b>\n\n"
-            f"📍 Записан в строку {row_num}\n"
-            f"🔑 ID: <code>{operation_id[:8]}...</code>\n\n"
             f"📁 Категория: {data['category']}\n"
             f"💰 Сумма: ${data['amount']:.2f}\n"
             f"📅 Дата: {date_str}",
-            reply_markup=get_main_menu(),
             parse_mode="HTML"
         )
 
@@ -959,8 +1358,8 @@ async def expense_confirm(callback: CallbackQuery, state: FSMContext):
             f"❌ <b>Ошибка сохранения!</b>\n\n{str(e)}",
             parse_mode="HTML"
         )
+        await state.clear()
 
-    await state.clear()
     await callback.answer("Расход сохранён!")
 
 
@@ -1050,14 +1449,12 @@ async def pure_income_confirm(callback: CallbackQuery, state: FSMContext):
         )
         logger.info(f"Written to GENERAL row {general_row}")
 
+        await state.clear()
         await callback.message.edit_text(
             "✅ <b>ЧИСТЫЙ ДОХОД СОХРАНЁН!</b>\n\n"
-            f"📍 Записан в строку {row_num}\n"
-            f"🔑 ID: <code>{operation_id[:8]}...</code>\n\n"
             f"📁 Название: {data['category']}\n"
             f"💰 Сумма: ${data['amount']:.2f}\n"
             f"📅 Дата: {date_str}",
-            reply_markup=get_main_menu(),
             parse_mode="HTML"
         )
 
@@ -1067,8 +1464,8 @@ async def pure_income_confirm(callback: CallbackQuery, state: FSMContext):
             f"❌ <b>Ошибка сохранения!</b>\n\n{str(e)}",
             parse_mode="HTML"
         )
+        await state.clear()
 
-    await state.clear()
     await callback.answer("Доход сохранён!")
 
 

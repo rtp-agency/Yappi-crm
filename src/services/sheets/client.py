@@ -347,33 +347,37 @@ class SheetsClient:
     # HIGH-LEVEL OPERATIONS (SHEET CONFIG AWARE)
     # ========================================================================
 
-    async def get_first_empty_row(self, sheet_key: str) -> int:
+    async def get_first_empty_row(self, sheet_key: str, check_column: str = None) -> int:
         """
-        Find the first empty row in the data columns range.
+        Find the first empty row by checking a specific column.
 
         Uses sheet config to determine:
         - start_row: minimum row to consider
-        - data_columns: columns to check for emptiness
+        - check_column: column to check for emptiness
         - skip_rows: rows to skip (never write to)
 
         Logic:
-        1. Read all data from data_columns starting from start_row
-        2. Find first row where ALL data columns are empty
+        1. Read the check_column from start_row
+        2. Find first row where that column is empty
         3. Skip rows from skip_rows list
         4. Return row number (1-based)
 
         Args:
             sheet_key: Key from SHEETS_CONFIG (e.g., "designer_data")
+            check_column: Column to check for emptiness (default: from config)
 
         Returns:
             Row number (1-based) of the first empty row
         """
         config = get_sheet_config(sheet_key)
 
+        # Priority: explicit parameter > config.check_column > config.data_start_col
+        col_to_check = check_column or config.check_column or config.data_start_col
+
         # Read from start_row to find existing data
-        # Read up to 500 rows (enough for most cases, avoids timeout)
+        # Read only the check column (faster and more accurate)
         max_row = config.start_row + 500
-        read_range = f"{config.data_start_col}{config.start_row}:{config.data_end_col}{max_row}"
+        read_range = f"{col_to_check}{config.start_row}:{col_to_check}{max_row}"
 
         try:
             data = await self.get_range(config.name, read_range)
@@ -390,7 +394,7 @@ class SheetsClient:
                 result_row += 1
             return result_row
 
-        # Find first completely empty row (skipping skip_rows)
+        # Find first empty row in the check column (skipping skip_rows)
         for i, row in enumerate(data):
             current_row = config.start_row + i
 
@@ -398,11 +402,8 @@ class SheetsClient:
             if current_row in config.skip_rows:
                 continue
 
-            # Check if row is completely empty
-            is_empty = not row or all(
-                cell == "" or cell is None
-                for cell in row
-            )
+            # Check if cell is empty
+            is_empty = not row or row[0] == "" or row[0] is None
             if is_empty:
                 return current_row
 
@@ -514,7 +515,7 @@ class SheetsClient:
                 font_color=(0, 0, 0)
             )
 
-            # Other data columns (G:K) - size 11
+            # Other data columns (G:K) - size 10 (for all numbers)
             if config.data_start_col != config.data_end_col:
                 next_col = chr(ord(config.data_start_col) + 1)
                 await self.format_cells(
@@ -523,12 +524,42 @@ class SheetsClient:
                     start_col=next_col,
                     end_col=config.data_end_col,
                     font_family="Roboto",
-                    font_size=11,
+                    font_size=10,
                     font_color=(0, 0, 0)
                 )
 
         logger.info(f"Wrote row {row_number} to {config.name}, operation_id={operation_id}")
         return row_number
+
+    async def update_sum_formula(
+        self,
+        sheet_name: str,
+        formula_cell: str,
+        sum_column: str,
+        start_row: int,
+        end_row: int
+    ) -> bool:
+        """
+        Update a SUM formula to include new row range.
+
+        Args:
+            sheet_name: Name of the sheet
+            formula_cell: Cell with formula (e.g., "F4")
+            sum_column: Column to sum (e.g., "I")
+            start_row: Start row for sum range
+            end_row: End row for sum range (new last row)
+
+        Returns:
+            True if successful
+        """
+        formula = f"=СУММ({sum_column}{start_row}:{sum_column}{end_row})"
+        try:
+            await self.update_range(sheet_name, formula_cell, [[formula]])
+            logger.info(f"Updated formula in {sheet_name}!{formula_cell}: {formula}")
+            return True
+        except HttpError as e:
+            logger.error(f"Error updating formula: {e}")
+            return False
 
     async def find_row_by_operation_id(
         self,
@@ -727,6 +758,87 @@ class SheetsClient:
             col_letter = chr(ord('A') + col_index + i)
             await self.update_cell(config.name, new_row, col_letter, value)
 
+        # Apply formatting:
+        # 1. operation_id in A - invisible (white text)
+        await self.format_cells(
+            sheet_name=config.name,
+            row_number=new_row,
+            start_col="A",
+            end_col="A",
+            font_family="Roboto",
+            font_size=8,
+            font_color=(1, 1, 1)  # White - invisible
+        )
+
+        # 2. Date column (F) - size 10, black
+        await self.format_cells(
+            sheet_name=config.name,
+            row_number=new_row,
+            start_col=config.data_start_col,
+            end_col=config.data_start_col,
+            font_family="Roboto",
+            font_size=10,
+            font_color=(0, 0, 0)
+        )
+
+        # 3. Text columns (G for category, I for designer) - size 11, black
+        # 4. Number columns (H, J) - size 10, black
+        # For Расходы: G=category(11), H=amount(10), I=designer(11), J=amount(10), K=formula
+        if config.name == "Расходы":
+            # G - category (text) - size 11
+            await self.format_cells(
+                sheet_name=config.name,
+                row_number=new_row,
+                start_col="G",
+                end_col="G",
+                font_family="Roboto",
+                font_size=11,
+                font_color=(0, 0, 0)
+            )
+            # H - amount (number) - size 10
+            await self.format_cells(
+                sheet_name=config.name,
+                row_number=new_row,
+                start_col="H",
+                end_col="H",
+                font_family="Roboto",
+                font_size=10,
+                font_color=(0, 0, 0)
+            )
+            # I - designer (text) - size 11
+            await self.format_cells(
+                sheet_name=config.name,
+                row_number=new_row,
+                start_col="I",
+                end_col="I",
+                font_family="Roboto",
+                font_size=11,
+                font_color=(0, 0, 0)
+            )
+            # J, K - numbers - size 10
+            await self.format_cells(
+                sheet_name=config.name,
+                row_number=new_row,
+                start_col="J",
+                end_col="K",
+                font_family="Roboto",
+                font_size=10,
+                font_color=(0, 0, 0)
+            )
+        else:
+            # Other sheets: all data columns - size 10
+            if config.data_start_col != config.data_end_col:
+                next_col = chr(ord(config.data_start_col) + 1)
+                await self.format_cells(
+                    sheet_name=config.name,
+                    row_number=new_row,
+                    start_col=next_col,
+                    end_col=config.data_end_col,
+                    font_family="Roboto",
+                    font_size=10,
+                    font_color=(0, 0, 0)
+                )
+
         logger.info(f"Wrote row {new_row} to {config.name} (expanded table), operation_id={operation_id}")
         return new_row
 
@@ -767,10 +879,10 @@ class SheetsClient:
         """
         config = get_sheet_config("clients_data")
 
-        # Read from row 9 where existing data starts
-        read_start = 9
+        # Read from start_row (from config)
+        read_start = config.start_row
         max_row = read_start + 500
-        read_range = f"G{read_start}:G{max_row}"  # Column G = client name
+        read_range = f"{config.check_column}{read_start}:{config.check_column}{max_row}"  # Column G = client name
 
         try:
             data = await self.get_range(config.name, read_range)
@@ -794,10 +906,10 @@ class SheetsClient:
         """
         config = get_sheet_config("designer_data")
 
-        # Read from row 15 where designer data starts
-        read_start = 15
+        # Read from start_row (from config)
+        read_start = config.start_row
         max_row = read_start + 500
-        read_range = f"G{read_start}:G{max_row}"  # Column G = designer name
+        read_range = f"{config.check_column}{read_start}:{config.check_column}{max_row}"  # Column G = designer name
 
         try:
             data = await self.get_range(config.name, read_range)
@@ -836,9 +948,8 @@ class SheetsClient:
         """
         config = get_sheet_config("clients_data")
 
-        # Read all data from the sheet
-        # Note: start_row=13 is for writing NEW data, but existing data starts from row 9
-        read_start = 9  # Existing data starts from row 9
+        # Read all data from the sheet (from start_row)
+        read_start = config.start_row
         max_row = read_start + 500
         read_range = f"F{read_start}:L{max_row}"
 
@@ -1116,6 +1227,64 @@ class SheetsClient:
         logger.info(f"Wrote pure income to row {new_row}, operation_id={operation_id}")
         return new_row
 
+    async def write_designer_to_pure_income(
+        self,
+        operation_id: str,
+        designer: str,
+        order_amount: float,
+        agency_income: float
+    ) -> int:
+        """
+        Write designer order data to "Чистый доход" sheet columns I, J, K.
+
+        For designer orders, we write to columns I, J, K (not F, G, H which is for pure income).
+
+        Args:
+            operation_id: UUID for this operation
+            designer: Designer name
+            order_amount: Order amount (выручка с дизайнеров)
+            agency_income: Agency income (итоговая выручка)
+
+        Returns:
+            Row number where data was written
+        """
+        config = get_sheet_config("pure_income")
+        sheet_name = config.name
+
+        # Find last row with data in column I (designer column)
+        last_row = await self.get_last_data_row(sheet_name, "I", config.start_row)
+
+        # If no data in I column, start from start_row
+        if last_row < config.start_row:
+            new_row = config.start_row
+        else:
+            new_row = last_row + 1
+
+        # Write operation_id to column A (white text - invisible)
+        await self.update_cell(sheet_name, new_row, "A", operation_id)
+
+        # Write data to columns I, J, K
+        await self.update_cell(sheet_name, new_row, "I", designer)
+        await self.update_cell(sheet_name, new_row, "J", order_amount)
+        await self.update_cell(sheet_name, new_row, "K", agency_income)
+
+        # Add borders to cells I, J, K
+        await self.add_row_borders(sheet_name, new_row, "I", "K")
+
+        # Make operation_id invisible
+        await self.format_cells(
+            sheet_name=sheet_name,
+            row_number=new_row,
+            start_col="A",
+            end_col="A",
+            font_family="Roboto",
+            font_size=8,
+            font_color=(1, 1, 1)  # White - invisible
+        )
+
+        logger.info(f"Wrote designer to pure income row {new_row}: {designer}, amount={order_amount}")
+        return new_row
+
     async def delete_pure_income_row(
         self,
         operation_id: str
@@ -1187,8 +1356,8 @@ class SheetsClient:
         """
         config = get_sheet_config("clients_data")
 
-        # Read data from row 9 where existing data starts
-        read_start = 9
+        # Read data from start_row (from config)
+        read_start = config.start_row
         max_row = read_start + 500
         read_range = f"G{read_start}:L{max_row}"  # G=client, I=amount, J=paid, K=debt
 
@@ -1250,8 +1419,8 @@ class SheetsClient:
         """
         config = get_sheet_config("designer_data")
 
-        # Read data from row 15 where designer data starts
-        read_start = 15
+        # Read data from start_row (from config)
+        read_start = config.start_row
         max_row = read_start + 500
         # F=date, G=designer, H=client, I=amount, J=percent, K=salary
         read_range = f"G{read_start}:K{max_row}"
@@ -1325,8 +1494,8 @@ class SheetsClient:
         """
         config = get_sheet_config("expenses")
 
-        # Read data from row 9 where existing data may start
-        read_start = 9
+        # Read data from start_row (from config)
+        read_start = config.start_row
         max_row = read_start + 500
         # F=date, G=category, H=amount
         read_range = f"G{read_start}:H{max_row}"
@@ -1729,6 +1898,96 @@ class SheetsClient:
         """Add new designer to categories."""
         return await self.add_category("designer", name, "active")
 
+    async def get_designers_from_categories(self) -> List[str]:
+        """
+        Get list of designers from "Категории" sheet.
+
+        Returns:
+            List of designer names
+        """
+        config = get_sheet_config("categories")
+
+        read_start = config.start_row
+        max_row = read_start + 500
+        read_range = f"B{read_start}:C{max_row}"
+
+        try:
+            data = await self.get_range(config.name, read_range)
+        except HttpError:
+            return []
+
+        designers = []
+        for row in data:
+            if not row or len(row) < 2:
+                continue
+
+            item_type = str(row[0]).strip().lower() if row[0] else ""
+            name = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+
+            if item_type == "designer" and name:
+                designers.append(name)
+
+        return sorted(designers)
+
+    async def get_clients_from_categories(self) -> List[str]:
+        """
+        Get list of clients from "Категории" sheet.
+
+        Returns:
+            List of client names
+        """
+        config = get_sheet_config("categories")
+
+        read_start = config.start_row
+        max_row = read_start + 500
+        read_range = f"B{read_start}:C{max_row}"
+
+        try:
+            data = await self.get_range(config.name, read_range)
+        except HttpError:
+            return []
+
+        clients = []
+        for row in data:
+            if not row or len(row) < 2:
+                continue
+
+            item_type = str(row[0]).strip().lower() if row[0] else ""
+            name = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+
+            if item_type == "client" and name:
+                clients.append(name)
+
+        return sorted(clients)
+
+    async def get_all_designers(self) -> List[str]:
+        """
+        Get all unique designers from both Categories and Дизайнер DATA sheets.
+
+        Returns:
+            List of unique designer names
+        """
+        from_categories = await self.get_designers_from_categories()
+        from_data = await self.get_unique_designers()
+
+        # Merge and dedupe
+        all_designers = set(from_categories) | set(from_data)
+        return sorted(list(all_designers))
+
+    async def get_all_clients(self) -> List[str]:
+        """
+        Get all unique clients from both Categories and Заказчики DATA sheets.
+
+        Returns:
+            List of unique client names
+        """
+        from_categories = await self.get_clients_from_categories()
+        from_data = await self.get_unique_clients()
+
+        # Merge and dedupe
+        all_clients = set(from_categories) | set(from_data)
+        return sorted(list(all_clients))
+
     async def setup_categories_headers(self) -> bool:
         """
         Setup beautiful headers for "Категории" sheet.
@@ -1765,6 +2024,7 @@ class SheetsClient:
         designer: str = "",
         client: str = "",
         order_amount: float = 0,
+        actual_payment: float = 0,
         designer_percent: float = 0,
         designer_salary: float = 0,
         agency_income: float = 0,
@@ -1778,28 +2038,38 @@ class SheetsClient:
         """
         Write data directly to GENERAL sheet.
 
-        IMPORTANT: Rows 9-12 contain FORMULAS - bot writes ONLY from row 13+
-
         GENERAL sheet structure:
         - A = operation_id (UUID) - HIDDEN column
-        - G-U = data columns (bot writes here)
+        - B-E = P&L columns (starts from row 17)
+        - G-U = data columns (starts from row 13)
 
-        Data columns (G-U):
-        - G = дата
+        P&L columns (B-E) from row 17:
+        - B = дата заполнения (DD.MM)
+        - C = итоговая выручка
+        - D = итоговые расходы
+        - E = чистая прибыль
+
+        Data columns (G-U) from row 13:
+        - G = дата (DD.MM без года)
         - H = дизайнер
         - I = заказчик
         - J = сумма заказа
-        - K = % дизайнера
+        - K = фактическая оплата
         - L = ЗП дизайнера
         - M = доход агентства
-        - N = категория чистого дохода
+        - N = % дизайнера
         - O = сумма чистого дохода
-        - P = категория расхода
+        - P = (пусто)
         - Q = сумма расхода
         - R = тип операции
         - S = (пусто)
-        - T = операционный кошелёк
+        - T = накопительный баланс (предыдущий T + profit)
         - U = резервный кошелёк
+
+        Row 4 formulas (FIXED range):
+        - G4 = СУММ(C17:C1000) - сумма выручки
+        - I4 = СУММ(D17:D1000) - сумма расходов
+        - K4 = СУММ(E17:E1000) - сумма прибыли
 
         Args:
             operation_id: UUID of the operation
@@ -1808,6 +2078,7 @@ class SheetsClient:
             designer: Designer name (for designer orders)
             client: Client name (for orders)
             order_amount: Order amount (for orders)
+            actual_payment: Actual payment received from client
             designer_percent: Designer percent (for % model)
             designer_salary: Designer salary (for salary model)
             agency_income: Agency income (order_amount - designer payment)
@@ -1819,41 +2090,165 @@ class SheetsClient:
             wallet_reserve: Amount to reserve wallet
 
         Returns:
-            Row number where data was written
+            Row number where data was written (G-U row)
         """
         await self.initialize()
 
-        # IMPORTANT: Bot writes from row 13+ only (rows 9-12 have formulas)
-        START_ROW = 13
+        # Get configs for GENERAL sections
+        from src.config.sheets_config import get_sheet_config
+        pl_config = get_sheet_config("general_pl")
+        data_config = get_sheet_config("general_data")
 
-        # Find last row with data in GENERAL (column A = operation_id, starting from row 13)
-        last_row = await self.get_last_data_row("GENERAL", "A", START_ROW)
-        new_row = max(last_row + 1, START_ROW)
+        # G-U data starts from row 9
+        DATA_START_ROW = data_config.start_row  # 9
+        # B-E P&L data starts from row 13
+        PL_START_ROW = pl_config.start_row  # 13
 
-        # Prepare data for columns G-U (15 columns)
-        data_columns = [
-            date,                   # G: дата
-            designer,               # H: дизайнер
-            client,                 # I: заказчик
-            order_amount or "",     # J: сумма заказа
-            designer_percent or "", # K: % дизайнера
-            designer_salary or "",  # L: ЗП дизайнера
-            agency_income or "",    # M: доход агентства
-            pure_income_category,   # N: категория чистого дохода
-            pure_income_amount or "",  # O: сумма чистого дохода
-            expense_category,       # P: категория расхода
-            expense_amount or "",   # Q: сумма расхода
-            operation_type,         # R: тип операции
-            "",                     # S: (пусто)
-            wallet_operational or "",  # T: операционный кошелёк
-            wallet_reserve or ""    # U: резервный кошелёк
+        # Find last row with data for G-U (check column G)
+        last_data_row = await self.get_last_data_row("GENERAL", data_config.check_column, DATA_START_ROW)
+        new_data_row = max(last_data_row + 1, DATA_START_ROW)
+
+        # Find last row with data for B-E P&L (check column B)
+        last_pl_row = await self.get_last_data_row("GENERAL", pl_config.check_column, PL_START_ROW)
+        new_pl_row = max(last_pl_row + 1, PL_START_ROW)
+
+        # Calculate P&L values based on operation type
+        if operation_type == "designer_order":
+            revenue = order_amount
+            expense = designer_salary
+            profit = agency_income
+            op_type_rus = "Дизайнерский заказ"
+        elif operation_type == "pure_order":
+            revenue = order_amount
+            expense = 0
+            profit = order_amount
+            op_type_rus = "Чистый заказ"
+        elif operation_type == "pure_income":
+            revenue = pure_income_amount
+            expense = 0
+            profit = pure_income_amount
+            op_type_rus = "Чистый доход"
+        elif operation_type == "expense":
+            revenue = 0
+            expense = expense_amount
+            profit = -expense_amount
+            op_type_rus = "Расход"
+        else:
+            revenue = 0
+            expense = 0
+            profit = 0
+            op_type_rus = operation_type
+
+        # Extract short date (DD.MM) from full date (DD.MM.YYYY)
+        short_date = date[:5] if len(date) >= 5 else date
+
+        # Get previous T value for cumulative balance
+        prev_balance = 0
+        if last_data_row >= DATA_START_ROW:
+            try:
+                t_data = await self.get_range("GENERAL", f"T{last_data_row}:T{last_data_row}")
+                if t_data and t_data[0] and t_data[0][0]:
+                    prev_balance = float(t_data[0][0])
+            except (HttpError, ValueError, TypeError, IndexError):
+                prev_balance = 0
+
+        # Calculate cumulative balance (column T)
+        cumulative_balance = prev_balance + profit
+
+        # Prepare data for columns B-E (P&L) - row 17+
+        # D (expense) = empty if no expense, not 0
+        pl_data = [
+            short_date,
+            revenue if revenue else "",
+            expense if expense > 0 else "",  # Empty if no expense
+            profit if profit != 0 else ""
         ]
 
-        # Write operation_id to column A (hidden)
-        await self.update_cell("GENERAL", new_row, "A", operation_id)
+        # Calculate debt and overpayment
+        debt = max(0, order_amount - actual_payment) if order_amount > 0 else 0
+        overpayment = max(0, actual_payment - order_amount) if actual_payment > order_amount else 0
 
-        # Write data to columns G-U
-        range_str = f"G{new_row}:U{new_row}"
+        # Prepare data for columns G-U (15 columns) - row 13+
+        # Correct column mapping:
+        # G = дата (DD.MM)
+        # H = дизайнер
+        # I = заказчик
+        # J = сумма заказа
+        # K = фактическая оплата
+        # L = долг (order_amount - actual_payment if > 0)
+        # M = переплата (0 if no overpayment)
+        # N = ЗП дизайнера (ТОЛЬКО для процентной модели) - сумма, не процент!
+        # O = ЗП дизайнера (ТОЛЬКО для окладной модели), 0 для процентной
+        # P = категория чистого дохода
+        # Q = сумма чистого дохода
+        # R = (пусто)
+        # S = сумма расхода
+        # T = остаток на кошельке: prev_T + K + Q - designer_cost - S
+        # U = резервный кошелёк
+
+        # Determine N and O values based on model:
+        # - Percent model (designer_percent > 0): N = designer_salary (calculated), O = 0
+        # - Salary model (designer_percent == 0, designer_salary > 0): N = empty, O = designer_salary
+        if designer_percent > 0:
+            # Percent model: put calculated salary in N, 0 in O
+            column_n = designer_salary if designer_salary else ""
+            column_o = 0
+            designer_cost = designer_salary if designer_salary else 0
+        elif designer_salary:
+            # Salary model: put salary in O, empty in N
+            column_n = ""
+            column_o = designer_salary
+            designer_cost = designer_salary
+        else:
+            # No designer (pure order, expense, etc.)
+            column_n = ""
+            column_o = ""
+            designer_cost = 0
+
+        # T column: simple calculation, not formula
+        # T = "На кошельке" - REAL money on account
+        # Only update T if there's actual payment or pure income or expense
+        # If no actual payment - just copy previous T value (money didn't arrive yet)
+        #
+        # IMPORTANT: Designer salary is NOT subtracted here!
+        # Designer salary will be subtracted when actually paid (as separate expense).
+        # T tracks real cash flow: +payment, +pure_income, -expense
+        if actual_payment > 0 or pure_income_amount > 0 or expense_amount > 0:
+            # Money flow happened - calculate new balance
+            # Designer cost is NOT subtracted - it's a future expense, not current cash outflow
+            t_value = prev_balance + actual_payment + pure_income_amount - expense_amount
+            logger.debug(f"T calculation: prev={prev_balance} + payment={actual_payment} + pure={pure_income_amount} - expense={expense_amount} = {t_value}")
+        else:
+            # No money flow - keep previous balance
+            t_value = prev_balance
+            logger.debug(f"T calculation: no payment, keeping prev={prev_balance}")
+
+        data_columns = [
+            short_date,                                      # G: дата (DD.MM)
+            designer if designer else "-",                   # H: дизайнер
+            client if client else "-",                       # I: заказчик
+            order_amount if order_amount else "",            # J: сумма заказа
+            actual_payment if actual_payment else "",        # K: фактическая оплата
+            debt if debt > 0 else "",                        # L: долг
+            overpayment if overpayment > 0 else 0,           # M: переплата (0 if none)
+            column_n,                                        # N: ЗП дизайнера (процентная модель)
+            column_o,                                        # O: ЗП дизайнера (окладная модель) или 0
+            pure_income_category if pure_income_category else "",  # P: категория чистого дохода
+            pure_income_amount if pure_income_amount else "",  # Q: сумма чистого дохода
+            "",                                              # R: (пусто)
+            expense_amount if expense_amount else "",        # S: сумма расхода
+            t_value,                                         # T: остаток на кошельке (значение, не формула)
+            wallet_reserve if wallet_reserve else ""         # U: резервный кошелёк
+        ]
+
+        # Write operation_id to column A (hidden) - at data row
+        await self.update_cell("GENERAL", new_data_row, "A", operation_id)
+
+        # Write P&L data to columns B-E (row 17+)
+        await self.update_range("GENERAL", f"B{new_pl_row}:E{new_pl_row}", [pl_data])
+
+        # Write data to columns G-U (row 13+)
+        range_str = f"G{new_data_row}:U{new_data_row}"
 
         def _write():
             return self._service.spreadsheets().values().update(
@@ -1869,7 +2264,7 @@ class SheetsClient:
             # Make operation_id invisible (white text on white background)
             await self.format_cells(
                 sheet_name="GENERAL",
-                row_number=new_row,
+                row_number=new_data_row,
                 start_col="A",
                 end_col="A",
                 font_family="Roboto",
@@ -1877,17 +2272,84 @@ class SheetsClient:
                 font_color=(1, 1, 1)  # White - invisible
             )
 
-            logger.info(f"Written to GENERAL row {new_row}: type={operation_type}, id={operation_id[:8]}...")
-            return new_row
+            # Add borders to both rows (P&L and data)
+            await self.add_row_borders("GENERAL", new_pl_row, "B", "E")
+            await self.add_row_borders("GENERAL", new_data_row, "G", "U")
+
+            logger.info(f"Written to GENERAL: data_row={new_data_row}, pl_row={new_pl_row}, type={operation_type}")
+            return new_data_row
         except HttpError as e:
             logger.error(f"Error writing to GENERAL: {e}")
             raise
 
+    async def add_row_borders(
+        self,
+        sheet_name: str,
+        row_number: int,
+        start_col: str,
+        end_col: str
+    ) -> bool:
+        """
+        Add borders to a row range.
+
+        Args:
+            sheet_name: Name of the sheet
+            row_number: Row number (1-based)
+            start_col: Start column letter
+            end_col: End column letter
+
+        Returns:
+            True if successful
+        """
+        await self.initialize()
+
+        sheet_id = await self.get_sheet_id(sheet_name)
+        if sheet_id is None:
+            return False
+
+        start_col_index = ord(start_col.upper()) - ord('A')
+        end_col_index = ord(end_col.upper()) - ord('A') + 1
+
+        def _add_borders():
+            border_style = {
+                "style": "SOLID",
+                "width": 1,
+                "color": {"red": 0, "green": 0, "blue": 0}
+            }
+
+            request = {
+                "updateBorders": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": row_number - 1,
+                        "endRowIndex": row_number,
+                        "startColumnIndex": start_col_index,
+                        "endColumnIndex": end_col_index
+                    },
+                    "top": border_style,
+                    "bottom": border_style,
+                    "left": border_style,
+                    "right": border_style,
+                    "innerHorizontal": border_style,
+                    "innerVertical": border_style
+                }
+            }
+
+            return self._service.spreadsheets().batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body={"requests": [request]}
+            ).execute()
+
+        try:
+            await self._run_sync(_add_borders)
+            return True
+        except HttpError as e:
+            logger.error(f"Error adding borders: {e}")
+            return False
+
     async def delete_general_row_by_operation_id(self, operation_id: str) -> bool:
         """
         Delete a row from GENERAL sheet by operation_id.
-
-        IMPORTANT: Searches column A starting from row 13 (rows 9-12 are formulas)
 
         Args:
             operation_id: UUID of the operation to delete
@@ -1897,10 +2359,12 @@ class SheetsClient:
         """
         await self.initialize()
 
-        # IMPORTANT: Bot data starts from row 13 (rows 9-12 have formulas)
-        START_ROW = 13
+        # Get config for GENERAL data section
+        from src.config.sheets_config import get_sheet_config
+        data_config = get_sheet_config("general_data")
+        START_ROW = data_config.start_row  # 9
 
-        # Find row by operation_id in column A (starting from row 13)
+        # Find row by operation_id in column A
         data = await self.get_range("GENERAL", f"A{START_ROW}:A500")
         row_to_delete = None
 
@@ -1935,6 +2399,7 @@ class SheetsClient:
 
         try:
             await self._run_sync(_delete_row)
+            # Formulas in G4, I4, K4 have FIXED range (C18:C1000 etc), no need to update
             logger.info(f"Deleted row {row_to_delete} from GENERAL (operation_id={operation_id[:8]}...)")
             return True
         except HttpError as e:
@@ -2008,11 +2473,12 @@ class SheetsClient:
                 except (ValueError, TypeError):
                     margin = 0
 
-            # Read data rows (G9:U500) for detailed analytics
-            # New structure: G=date, H=designer, I=client, J=order_amount, K=designer%,
-            #                L=designer_salary, M=agency_income, N=pure_cat, O=pure_amount,
-            #                P=expense_cat, Q=expense_amount, R=type, S=empty, T=wallet1, U=wallet2
-            data = await self.get_range("GENERAL", "G9:U500")
+            # Read data rows for detailed analytics
+            # Get config for GENERAL data section
+            from src.config.sheets_config import get_sheet_config as get_config
+            data_config = get_config("general_data")
+            data_start = data_config.start_row  # 9
+            data = await self.get_range("GENERAL", f"G{data_start}:U500")
 
             by_designer = {}
             by_client = {}
@@ -2125,8 +2591,10 @@ class SheetsClient:
                 margin = float(row[6]) if len(row) > 6 and row[6] else 0
 
             # Read column T to find last value (account balance)
-            # Data starts from row 9
-            t_data = await self.get_range("GENERAL", "T9:T100")
+            # Get config for GENERAL data section
+            from src.config.sheets_config import get_sheet_config as get_config
+            data_config = get_config("general_data")
+            t_data = await self.get_range("GENERAL", f"T{data_config.start_row}:T100")
 
             account_balance = 0
             if t_data:
