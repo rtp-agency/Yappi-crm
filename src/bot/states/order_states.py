@@ -64,7 +64,10 @@ class PureIncomeStates(StatesGroup):
     # Step 2: Enter amount
     waiting_for_amount = State()
 
-    # Step 3: Confirm
+    # Step 3: Select wallet
+    waiting_for_wallet = State()
+
+    # Step 4: Confirm
     waiting_for_confirmation = State()
 
 

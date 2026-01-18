@@ -684,7 +684,8 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
 async def cancel_order(callback: CallbackQuery, state: FSMContext):
     """Cancel order creation."""
     await state.clear()
-    await callback.message.edit_text(
+    await callback.message.delete()
+    await callback.message.answer(
         "❌ Операция отменена.",
         reply_markup=get_main_menu(),
         parse_mode="HTML"
@@ -1249,7 +1250,8 @@ async def payment_confirm(callback: CallbackQuery, state: FSMContext):
         updates = await sheets.distribute_payment_fifo(client_name, payment_amount)
 
         if not updates:
-            await callback.message.edit_text(
+            await callback.message.delete()
+            await callback.message.answer(
                 "⚠️ Не удалось применить оплату.\n"
                 "Возможно, долги уже были погашены.",
                 reply_markup=get_main_menu(),
@@ -1272,7 +1274,8 @@ async def payment_confirm(callback: CallbackQuery, state: FSMContext):
         if remaining > 0:
             extra = f"\n💡 Остаток (переплата): ${remaining:.2f}"
 
-        await callback.message.edit_text(
+        await callback.message.delete()
+        await callback.message.answer(
             "✅ <b>ОПЛАТА ПРИМЕНЕНА!</b>\n\n"
             f"👤 Заказчик: {client_name}\n"
             f"💰 Сумма: ${payment_amount:.2f}\n"
@@ -1431,7 +1434,7 @@ async def pure_income_enter_category(message: Message, state: FSMContext):
 
 @router.message(PureIncomeStates.waiting_for_amount)
 async def pure_income_enter_amount(message: Message, state: FSMContext):
-    """Amount entered - show confirmation."""
+    """Amount entered - show wallet selection."""
     try:
         amount = float(message.text.strip().replace(",", ".").replace("$", ""))
         if amount <= 0:
@@ -1440,13 +1443,38 @@ async def pure_income_enter_amount(message: Message, state: FSMContext):
         await message.answer("❌ Введите корректную сумму (число):")
         return
 
-    data = await state.get_data()
     await state.update_data(amount=amount)
 
     await message.answer(
+        "💼 <b>ВЫБОР КОШЕЛЬКА</b>\n\n"
+        f"💰 Сумма: <b>${amount:.2f}</b>\n\n"
+        "Куда зачислить доход?",
+        reply_markup=get_wallet_keyboard(),
+        parse_mode="HTML"
+    )
+    await state.set_state(PureIncomeStates.waiting_for_wallet)
+
+
+@router.callback_query(F.data.startswith("wallet:"), PureIncomeStates.waiting_for_wallet)
+async def pure_income_select_wallet(callback: CallbackQuery, state: FSMContext):
+    """Wallet selected - show confirmation."""
+    wallet = callback.data.split(":")[1]
+    await callback.answer()
+
+    data = await state.get_data()
+    await state.update_data(wallet=wallet)
+
+    wallet_labels = {
+        "operational": "Операционный",
+        "reserve": "Резервный",
+        "split": "50/50"
+    }
+
+    await callback.message.edit_text(
         "📋 <b>ПОДТВЕРЖДЕНИЕ ЧИСТОГО ДОХОДА</b>\n\n"
         f"📁 Название: <b>{data['category']}</b>\n"
-        f"💰 Сумма: <b>${amount:.2f}</b>\n"
+        f"💰 Сумма: <b>${data['amount']:.2f}</b>\n"
+        f"💼 Кошелёк: <b>{wallet_labels.get(wallet, wallet)}</b>\n"
         f"📅 Дата: <b>{datetime.now().strftime('%d.%m.%Y')}</b>\n\n"
         "Подтвердить?",
         reply_markup=get_confirm_keyboard(),
@@ -1468,6 +1496,20 @@ async def pure_income_confirm(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
 
+    # Calculate wallet distribution based on selected wallet
+    wallet = data.get("wallet", "operational")
+    amount = data["amount"]
+
+    if wallet == "operational":
+        wallet_operational = amount
+        wallet_reserve = 0
+    elif wallet == "reserve":
+        wallet_operational = 0
+        wallet_reserve = amount
+    else:  # split (50/50)
+        wallet_operational = amount / 2
+        wallet_reserve = amount / 2
+
     try:
         client = get_sheets_client()
         await client.initialize()
@@ -1487,15 +1529,23 @@ async def pure_income_confirm(callback: CallbackQuery, state: FSMContext):
             operation_type="pure_income",
             pure_income_category=data["category"],
             pure_income_amount=data["amount"],
-            wallet_reserve=data["amount"]
+            wallet_operational=wallet_operational,
+            wallet_reserve=wallet_reserve
         )
-        logger.info(f"Written to GENERAL row {general_row}")
+        logger.info(f"Written to GENERAL row {general_row}, wallet={wallet}")
+
+        wallet_labels = {
+            "operational": "Операционный",
+            "reserve": "Резервный",
+            "split": "50/50"
+        }
 
         await state.clear()
         await callback.message.edit_text(
             "✅ <b>ЧИСТЫЙ ДОХОД СОХРАНЁН!</b>\n\n"
             f"📁 Название: {data['category']}\n"
             f"💰 Сумма: ${data['amount']:.2f}\n"
+            f"💼 Кошелёк: {wallet_labels.get(wallet, wallet)}\n"
             f"📅 Дата: {date_str}",
             parse_mode="HTML"
         )
@@ -1572,7 +1622,8 @@ async def add_client_confirm(callback: CallbackQuery, state: FSMContext):
 
         if success:
             logger.info(f"New client added: {name}")
-            await callback.message.edit_text(
+            await callback.message.delete()
+            await callback.message.answer(
                 "✅ <b>ЗАКАЗЧИК ДОБАВЛЕН!</b>\n\n"
                 f"👤 <b>{name}</b>\n\n"
                 "Теперь можно создавать заказы с этим заказчиком.",
@@ -1580,7 +1631,8 @@ async def add_client_confirm(callback: CallbackQuery, state: FSMContext):
                 parse_mode="HTML"
             )
         else:
-            await callback.message.edit_text(
+            await callback.message.delete()
+            await callback.message.answer(
                 "⚠️ <b>Заказчик уже существует!</b>\n\n"
                 f"👤 <b>{name}</b> уже есть в базе.",
                 reply_markup=get_main_menu(),
@@ -1659,7 +1711,8 @@ async def add_designer_confirm(callback: CallbackQuery, state: FSMContext):
 
         if success:
             logger.info(f"New designer added: {name}")
-            await callback.message.edit_text(
+            await callback.message.delete()
+            await callback.message.answer(
                 "✅ <b>ДИЗАЙНЕР ДОБАВЛЕН!</b>\n\n"
                 f"🎨 <b>{name}</b>\n\n"
                 "Теперь можно создавать заказы с этим дизайнером.",
@@ -1667,7 +1720,8 @@ async def add_designer_confirm(callback: CallbackQuery, state: FSMContext):
                 parse_mode="HTML"
             )
         else:
-            await callback.message.edit_text(
+            await callback.message.delete()
+            await callback.message.answer(
                 "⚠️ <b>Дизайнер уже существует!</b>\n\n"
                 f"🎨 <b>{name}</b> уже есть в базе.",
                 reply_markup=get_main_menu(),
