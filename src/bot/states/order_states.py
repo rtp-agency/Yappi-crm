@@ -29,7 +29,10 @@ class DesignerOrderStates(StatesGroup):
     # Step 7: Enter actual payment from client
     waiting_for_actual_payment = State()
 
-    # Step 8: Confirm order
+    # Step 8: Select wallet (operational/reserve/split)
+    waiting_for_wallet = State()
+
+    # Step 9: Confirm order
     waiting_for_confirmation = State()
 
 
@@ -109,3 +112,13 @@ class AddDesignerStates(StatesGroup):
 
     # Step 2: Confirm
     waiting_for_confirmation = State()
+
+
+class DateFilterStates(StatesGroup):
+    """States for custom date range input."""
+
+    # Step 1: Enter start date (DD.MM.YYYY)
+    waiting_for_start_date = State()
+
+    # Step 2: Enter end date (DD.MM.YYYY)
+    waiting_for_end_date = State()

@@ -206,6 +206,75 @@ def get_designers_keyboard(designers: list[str]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_designer_info_keyboard(designers: list[str], period_label: str = None) -> InlineKeyboardMarkup:
+    """
+    Keyboard with list of designers for viewing analytics.
+
+    Args:
+        designers: List of designer names
+        period_label: Optional label for current filter period
+    """
+    builder = InlineKeyboardBuilder()
+
+    for designer in designers[:20]:  # Limit to 20
+        builder.row(
+            InlineKeyboardButton(
+                text=f"🎨 {designer}",
+                callback_data=f"designer_info:{designer[:40]}"
+            )
+        )
+
+    # Filter button
+    filter_text = f"📅 Фильтр: {period_label}" if period_label else "📅 Фильтр по датам"
+    builder.row(
+        InlineKeyboardButton(text=filter_text, callback_data="filter:designers")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu:back")
+    )
+
+    return builder.as_markup()
+
+
+def get_client_info_keyboard(clients: list[str], period_label: str = None) -> InlineKeyboardMarkup:
+    """
+    Keyboard with list of clients for viewing analytics.
+
+    Args:
+        clients: List of client names
+        period_label: Optional label for current filter period
+    """
+    builder = InlineKeyboardBuilder()
+
+    for client in clients[:20]:  # Limit to 20
+        builder.row(
+            InlineKeyboardButton(
+                text=f"👤 {client}",
+                callback_data=f"client_info:{client[:40]}"
+            )
+        )
+
+    # Filter button
+    filter_text = f"📅 Фильтр: {period_label}" if period_label else "📅 Фильтр по датам"
+    builder.row(
+        InlineKeyboardButton(text=filter_text, callback_data="filter:clients")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu:back")
+    )
+
+    return builder.as_markup()
+
+
+def get_back_keyboard(callback_data: str = "menu:back") -> InlineKeyboardMarkup:
+    """Simple back button keyboard."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=callback_data)
+    )
+    return builder.as_markup()
+
+
 def get_lists_menu() -> InlineKeyboardMarkup:
     """
     Lists management menu (White/Black list).
@@ -326,6 +395,91 @@ def get_client_in_list_keyboard(client_name: str, current_list: str) -> InlineKe
 
     builder.row(
         InlineKeyboardButton(text="⬅️ Назад", callback_data="lists:back")
+    )
+
+    return builder.as_markup()
+
+
+def get_period_keyboard(context: str = "dashboard") -> InlineKeyboardMarkup:
+    """
+    Period selection keyboard for date filtering.
+
+    Args:
+        context: The context where filter is used (dashboard, designers, clients, expenses)
+    """
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        InlineKeyboardButton(text="📅 Сегодня", callback_data=f"period:{context}:today"),
+        InlineKeyboardButton(text="📅 Эта неделя", callback_data=f"period:{context}:week")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📅 Этот месяц", callback_data=f"period:{context}:month"),
+        InlineKeyboardButton(text="📅 Весь период", callback_data=f"period:{context}:all")
+    )
+    builder.row(
+        InlineKeyboardButton(text="✏️ Выбрать даты", callback_data=f"period:{context}:custom")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="menu:back")
+    )
+
+    return builder.as_markup()
+
+
+def get_period_back_keyboard(context: str = "dashboard") -> InlineKeyboardMarkup:
+    """Back button to return to period selection."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📅 Изменить период", callback_data=f"filter:{context}"),
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="menu:back")
+    )
+    return builder.as_markup()
+
+
+def get_dashboard_keyboard(period_label: str = None) -> InlineKeyboardMarkup:
+    """Dashboard keyboard with filter button."""
+    builder = InlineKeyboardBuilder()
+
+    filter_text = f"📅 Фильтр: {period_label}" if period_label else "📅 Фильтр по датам"
+    builder.row(
+        InlineKeyboardButton(text=filter_text, callback_data="filter:dashboard")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu:back")
+    )
+
+    return builder.as_markup()
+
+
+def get_expenses_keyboard(period_label: str = None) -> InlineKeyboardMarkup:
+    """Expenses keyboard with filter button."""
+    builder = InlineKeyboardBuilder()
+
+    filter_text = f"📅 Фильтр: {period_label}" if period_label else "📅 Фильтр по датам"
+    builder.row(
+        InlineKeyboardButton(text=filter_text, callback_data="filter:expenses")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu:back")
+    )
+
+    return builder.as_markup()
+
+
+def get_debts_keyboard(period_label: str = None) -> InlineKeyboardMarkup:
+    """Debts/Lists keyboard with filter button."""
+    builder = InlineKeyboardBuilder()
+
+    filter_text = f"📅 Фильтр: {period_label}" if period_label else "📅 Фильтр по датам"
+    builder.row(
+        InlineKeyboardButton(text=filter_text, callback_data="filter:debts")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⚠️ White/Black списки", callback_data="lists:menu")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu:back")
     )
 
     return builder.as_markup()

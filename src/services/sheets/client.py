@@ -4,7 +4,8 @@ Google Sheets async client.
 Provides base operations for reading/writing to Google Sheets.
 """
 import asyncio
-from typing import List, Optional, Any, Dict
+from datetime import datetime, timedelta
+from typing import List, Optional, Any, Dict, Tuple
 from concurrent.futures import ThreadPoolExecutor
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -52,6 +53,101 @@ class SheetsClient:
     def spreadsheet_id(self) -> str:
         """Get spreadsheet ID from settings."""
         return self._settings.SPREADSHEET_ID
+
+    # ========================================================================
+    # DATE UTILITIES
+    # ========================================================================
+
+    @staticmethod
+    def parse_date(date_str: str) -> Optional[datetime]:
+        """
+        Parse date string in DD.MM.YYYY or DD.MM format.
+
+        Args:
+            date_str: Date string to parse
+
+        Returns:
+            datetime object or None if parsing fails
+        """
+        if not date_str:
+            return None
+
+        date_str = str(date_str).strip()
+
+        # Try DD.MM.YYYY format
+        try:
+            return datetime.strptime(date_str, "%d.%m.%Y")
+        except ValueError:
+            pass
+
+        # Try DD.MM format (assume current year)
+        try:
+            parsed = datetime.strptime(date_str, "%d.%m")
+            return parsed.replace(year=datetime.now().year)
+        except ValueError:
+            pass
+
+        return None
+
+    @staticmethod
+    def get_period_dates(period: str) -> Tuple[Optional[datetime], Optional[datetime]]:
+        """
+        Get start and end dates for a named period.
+
+        Args:
+            period: Period name (today, week, month, all)
+
+        Returns:
+            Tuple of (start_date, end_date). None means no limit.
+        """
+        now = datetime.now()
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        if period == "today":
+            return (today, now)
+        elif period == "week":
+            # Start of current week (Monday)
+            start_of_week = today - timedelta(days=today.weekday())
+            return (start_of_week, now)
+        elif period == "month":
+            # Start of current month
+            start_of_month = today.replace(day=1)
+            return (start_of_month, now)
+        elif period == "all":
+            return (None, None)
+        else:
+            return (None, None)
+
+    def is_date_in_range(
+        self,
+        date_str: str,
+        start_date: Optional[datetime],
+        end_date: Optional[datetime]
+    ) -> bool:
+        """
+        Check if date string falls within the specified range.
+
+        Args:
+            date_str: Date string in DD.MM.YYYY or DD.MM format
+            start_date: Start of range (None = no limit)
+            end_date: End of range (None = no limit)
+
+        Returns:
+            True if date is in range (or if range is unbounded)
+        """
+        if start_date is None and end_date is None:
+            return True
+
+        parsed_date = self.parse_date(date_str)
+        if parsed_date is None:
+            return False
+
+        if start_date is not None and parsed_date < start_date:
+            return False
+        if end_date is not None and parsed_date > end_date:
+            return False
+
+        return True
 
     # ========================================================================
     # LOW-LEVEL OPERATIONS
@@ -1342,7 +1438,11 @@ class SheetsClient:
             logger.error(f"Error deleting row: {e}")
             return False
 
-    async def get_clients_with_debts(self) -> List[Dict[str, Any]]:
+    async def get_clients_with_debts(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
         """
         Get all clients with their total debts from "Заказчики DATA" sheet.
 
@@ -1350,6 +1450,10 @@ class SheetsClient:
         - Total orders amount
         - Total paid
         - Total debt
+
+        Args:
+            start_date: Filter start date (None = no limit)
+            end_date: Filter end date (None = no limit)
 
         Returns:
             List of dicts sorted by debt (highest first)
@@ -1359,7 +1463,8 @@ class SheetsClient:
         # Read data from start_row (from config)
         read_start = config.start_row
         max_row = read_start + 500
-        read_range = f"G{read_start}:L{max_row}"  # G=client, I=amount, J=paid, K=debt
+        # F=date, G=client, H=designer, I=amount, J=paid, K=debt, L=?
+        read_range = f"F{read_start}:L{max_row}"
 
         try:
             data = await self.get_range(config.name, read_range)
@@ -1369,19 +1474,26 @@ class SheetsClient:
         # Aggregate by client
         clients_data = {}
         for row in data:
-            if not row or len(row) < 1:
+            if not row or len(row) < 2:
                 continue
 
-            client_name = str(row[0]).strip() if row[0] else ""
+            # F=0 (date), G=1 (client), H=2 (designer), I=3 (amount), J=4 (paid), K=5 (debt)
+            date_str = str(row[0]).strip() if row[0] else ""
+            client_name = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+
             if not client_name:
                 continue
 
-            # Parse values (G=0, H=1, I=2, J=3, K=4, L=5)
+            # Apply date filter
+            if not self.is_date_in_range(date_str, start_date, end_date):
+                continue
+
+            # Parse values
             # Skip header rows by catching conversion errors
             try:
-                amount = float(row[2]) if len(row) > 2 and row[2] else 0
-                paid = float(row[3]) if len(row) > 3 and row[3] else 0
-                debt = float(row[4]) if len(row) > 4 and row[4] else 0
+                amount = float(row[3]) if len(row) > 3 and row[3] else 0
+                paid = float(row[4]) if len(row) > 4 and row[4] else 0
+                debt = float(row[5]) if len(row) > 5 and row[5] else 0
             except (ValueError, TypeError):
                 # Skip header rows or invalid data
                 continue
@@ -1405,7 +1517,11 @@ class SheetsClient:
         result.sort(key=lambda x: x["total_debt"], reverse=True)
         return result
 
-    async def get_designers_with_earnings(self) -> List[Dict[str, Any]]:
+    async def get_designers_with_earnings(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
         """
         Get all designers with their earnings from "Дизайнер DATA" sheet.
 
@@ -1413,6 +1529,10 @@ class SheetsClient:
         - Total orders count
         - Total order amount
         - Total designer salary (earnings)
+
+        Args:
+            start_date: Filter start date (None = no limit)
+            end_date: Filter end date (None = no limit)
 
         Returns:
             List of dicts sorted by total salary (highest first)
@@ -1423,7 +1543,7 @@ class SheetsClient:
         read_start = config.start_row
         max_row = read_start + 500
         # F=date, G=designer, H=client, I=amount, J=percent, K=salary
-        read_range = f"G{read_start}:K{max_row}"
+        read_range = f"F{read_start}:K{max_row}"
 
         try:
             data = await self.get_range(config.name, read_range)
@@ -1433,19 +1553,26 @@ class SheetsClient:
         # Aggregate by designer
         designers_data = {}
         for row in data:
-            if not row or len(row) < 1:
+            if not row or len(row) < 2:
                 continue
 
-            designer_name = str(row[0]).strip() if row[0] else ""
+            # F=0 (date), G=1 (designer), H=2 (client), I=3 (amount), J=4 (percent), K=5 (salary)
+            date_str = str(row[0]).strip() if row[0] else ""
+            designer_name = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+
             if not designer_name:
                 continue
 
-            # Parse values (G=0, H=1, I=2, J=3, K=4)
+            # Apply date filter
+            if not self.is_date_in_range(date_str, start_date, end_date):
+                continue
+
+            # Parse values
             # Skip header rows by catching conversion errors
             try:
-                amount = float(row[2]) if len(row) > 2 and row[2] else 0
-                percent = float(row[3]) if len(row) > 3 and row[3] else 0
-                salary = float(row[4]) if len(row) > 4 and row[4] else 0
+                amount = float(row[3]) if len(row) > 3 and row[3] else 0
+                percent = float(row[4]) if len(row) > 4 and row[4] else 0
+                salary = float(row[5]) if len(row) > 5 and row[5] else 0
             except (ValueError, TypeError):
                 # Skip header rows or invalid data
                 continue
@@ -2142,18 +2269,23 @@ class SheetsClient:
         # Extract short date (DD.MM) from full date (DD.MM.YYYY)
         short_date = date[:5] if len(date) >= 5 else date
 
-        # Get previous T value for cumulative balance
-        prev_balance = 0
+        # Get previous T and U values for cumulative balances
+        prev_t_balance = 0
+        prev_u_balance = 0
         if last_data_row >= DATA_START_ROW:
             try:
-                t_data = await self.get_range("GENERAL", f"T{last_data_row}:T{last_data_row}")
-                if t_data and t_data[0] and t_data[0][0]:
-                    prev_balance = float(t_data[0][0])
+                tu_data = await self.get_range("GENERAL", f"T{last_data_row}:U{last_data_row}")
+                if tu_data and tu_data[0]:
+                    if len(tu_data[0]) > 0 and tu_data[0][0]:
+                        prev_t_balance = float(tu_data[0][0])
+                    if len(tu_data[0]) > 1 and tu_data[0][1]:
+                        prev_u_balance = float(tu_data[0][1])
             except (HttpError, ValueError, TypeError, IndexError):
-                prev_balance = 0
+                prev_t_balance = 0
+                prev_u_balance = 0
 
-        # Calculate cumulative balance (column T)
-        cumulative_balance = prev_balance + profit
+        # Calculate cumulative balance (column T) - not used directly anymore
+        cumulative_balance = prev_t_balance + profit
 
         # Prepare data for columns B-E (P&L) - row 17+
         # D (expense) = empty if no expense, not 0
@@ -2205,23 +2337,39 @@ class SheetsClient:
             column_o = ""
             designer_cost = 0
 
-        # T column: simple calculation, not formula
-        # T = "На кошельке" - REAL money on account
-        # Only update T if there's actual payment or pure income or expense
-        # If no actual payment - just copy previous T value (money didn't arrive yet)
+        # T column (Операционный кошелёк) and U column (Резервный кошелёк)
+        #
+        # wallet_operational and wallet_reserve determine how agency income is distributed:
+        # - Операционный: T += wallet_operational, U unchanged
+        # - Резервный: T unchanged from this income, U += wallet_reserve
+        # - 50/50: T += wallet_operational/2, U += wallet_reserve/2
+        #
+        # For expenses: T -= expense_amount (expenses always come from operational)
+        # For pure_income without wallet selection: goes to T (operational) by default
         #
         # IMPORTANT: Designer salary is NOT subtracted here!
         # Designer salary will be subtracted when actually paid (as separate expense).
-        # T tracks real cash flow: +payment, +pure_income, -expense
-        if actual_payment > 0 or pure_income_amount > 0 or expense_amount > 0:
-            # Money flow happened - calculate new balance
-            # Designer cost is NOT subtracted - it's a future expense, not current cash outflow
-            t_value = prev_balance + actual_payment + pure_income_amount - expense_amount
-            logger.debug(f"T calculation: prev={prev_balance} + payment={actual_payment} + pure={pure_income_amount} - expense={expense_amount} = {t_value}")
+
+        # Calculate T (operational wallet)
+        if wallet_operational > 0 or pure_income_amount > 0 or expense_amount > 0:
+            # wallet_operational contains the portion of agency income going to operational
+            # pure_income goes to operational by default (unless wallet_reserve is set)
+            pure_to_operational = pure_income_amount if wallet_reserve == 0 else 0
+            t_value = prev_t_balance + wallet_operational + pure_to_operational - expense_amount
+            logger.debug(f"T calculation: prev={prev_t_balance} + wallet_op={wallet_operational} + pure={pure_to_operational} - expense={expense_amount} = {t_value}")
         else:
-            # No money flow - keep previous balance
-            t_value = prev_balance
-            logger.debug(f"T calculation: no payment, keeping prev={prev_balance}")
+            # No money flow to operational - keep previous balance
+            t_value = prev_t_balance
+            logger.debug(f"T calculation: no operational flow, keeping prev={prev_t_balance}")
+
+        # Calculate U (reserve wallet)
+        if wallet_reserve > 0:
+            u_value = prev_u_balance + wallet_reserve
+            logger.debug(f"U calculation: prev={prev_u_balance} + wallet_reserve={wallet_reserve} = {u_value}")
+        else:
+            # No money flow to reserve - keep previous balance
+            u_value = prev_u_balance if prev_u_balance > 0 else ""
+            logger.debug(f"U calculation: no reserve flow, keeping prev={prev_u_balance}")
 
         data_columns = [
             short_date,                                      # G: дата (DD.MM)
@@ -2237,8 +2385,8 @@ class SheetsClient:
             pure_income_amount if pure_income_amount else "",  # Q: сумма чистого дохода
             "",                                              # R: (пусто)
             expense_amount if expense_amount else "",        # S: сумма расхода
-            t_value,                                         # T: остаток на кошельке (значение, не формула)
-            wallet_reserve if wallet_reserve else ""         # U: резервный кошелёк
+            t_value,                                         # T: операционный кошелёк (накопительный)
+            u_value                                          # U: резервный кошелёк (накопительный)
         ]
 
         # Write operation_id to column A (hidden) - at data row

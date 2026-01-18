@@ -470,7 +470,7 @@ async def enter_salary(message: Message, state: FSMContext):
 
 @router.message(DesignerOrderStates.waiting_for_actual_payment)
 async def enter_actual_payment(message: Message, state: FSMContext):
-    """Actual payment entered - show confirmation."""
+    """Actual payment entered - ask for wallet selection."""
     try:
         actual_payment = float(message.text.strip().replace(",", ".").replace("$", ""))
         if actual_payment < 0:
@@ -482,7 +482,25 @@ async def enter_actual_payment(message: Message, state: FSMContext):
     await state.update_data(actual_payment=actual_payment)
     data = await state.get_data()
 
-    # Calculate debt
+    # Show wallet selection
+    await message.answer(
+        f"💼 <b>Выбор кошелька</b>\n\n"
+        f"Доход агентства: <b>${data['agency_income']:.2f}</b>\n\n"
+        "На какой кошелёк зачислить доход?",
+        reply_markup=get_wallet_keyboard(),
+        parse_mode="HTML"
+    )
+    await state.set_state(DesignerOrderStates.waiting_for_wallet)
+
+
+@router.callback_query(F.data.startswith("wallet:"), DesignerOrderStates.waiting_for_wallet)
+async def designer_order_wallet(callback: CallbackQuery, state: FSMContext):
+    """Wallet selected for designer order - show confirmation."""
+    wallet = callback.data.split(":")[1]  # operational, reserve, split
+    await state.update_data(wallet=wallet)
+    data = await state.get_data()
+
+    actual_payment = data.get("actual_payment", 0)
     debt = data["amount"] - actual_payment
 
     model_name = "Процентная" if data["model"] == "percent" else "Окладная"
@@ -494,8 +512,15 @@ async def enter_actual_payment(message: Message, state: FSMContext):
     elif debt < 0:
         debt_text = f"\n🟢 Переплата: <b>${abs(debt):.2f}</b>"
 
+    wallet_names = {
+        "operational": "💼 Операционный",
+        "reserve": "🏦 Резервный",
+        "split": "⚖️ 50/50"
+    }
+    wallet_text = wallet_names.get(wallet, wallet)
+
     # Show confirmation
-    await message.answer(
+    await callback.message.edit_text(
         "📋 <b>ПОДТВЕРЖДЕНИЕ ЗАКАЗА</b>\n\n"
         f"🎨 Дизайнер: <b>{data['designer']}</b>\n"
         f"👤 Заказчик: <b>{data['client']}</b>\n"
@@ -503,12 +528,14 @@ async def enter_actual_payment(message: Message, state: FSMContext):
         f"💰 Сумма заказа: <b>${data['amount']:.2f}</b>\n"
         f"💵 Фактическая оплата: <b>${actual_payment:.2f}</b>{percent_text}\n\n"
         f"💵 ЗП дизайнеру: <b>${data['designer_salary']:.2f}</b>\n"
-        f"💼 Доход агентства: <b>${data['agency_income']:.2f}</b>{debt_text}\n\n"
+        f"💼 Доход агентства: <b>${data['agency_income']:.2f}</b>\n"
+        f"🏦 Кошелёк: <b>{wallet_text}</b>{debt_text}\n\n"
         "Подтвердить заказ?",
         reply_markup=get_confirm_keyboard(),
         parse_mode="HTML"
     )
     await state.set_state(DesignerOrderStates.waiting_for_confirmation)
+    await callback.answer()
 
 
 # ============================================================================
@@ -596,6 +623,20 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
         logger.info(f"Written to Чистый доход row {pure_income_row}")
 
         # 4. Write to GENERAL sheet
+        # Calculate wallet distribution based on user selection
+        wallet = data.get("wallet", "operational")
+        agency_income = data.get("agency_income", 0)
+
+        if wallet == "operational":
+            wallet_operational = agency_income
+            wallet_reserve = 0
+        elif wallet == "reserve":
+            wallet_operational = 0
+            wallet_reserve = agency_income
+        else:  # split (50/50)
+            wallet_operational = agency_income / 2
+            wallet_reserve = agency_income / 2
+
         general_row = await client.write_to_general(
             operation_id=operation_id,
             date=date_str,
@@ -606,10 +647,11 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
             actual_payment=actual_payment,
             designer_percent=data.get("percent", 0),
             designer_salary=data.get("designer_salary", 0),
-            agency_income=data.get("agency_income", 0),
-            wallet_operational=data.get("agency_income", 0)
+            agency_income=agency_income,
+            wallet_operational=wallet_operational,
+            wallet_reserve=wallet_reserve
         )
-        logger.info(f"Written to GENERAL row {general_row}")
+        logger.info(f"Written to GENERAL row {general_row}, wallet={wallet}")
 
         debt_text = ""
         if debt > 0:

@@ -1,6 +1,7 @@
 """
 Start command and main menu handlers.
 """
+from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
@@ -14,9 +15,19 @@ from src.bot.keyboards.main_menu import (
     get_list_clients_keyboard,
     get_client_in_list_keyboard,
     get_analytics_menu,
-    get_analytics_back_keyboard
+    get_analytics_back_keyboard,
+    get_designer_info_keyboard,
+    get_client_info_keyboard,
+    get_back_keyboard,
+    get_period_keyboard,
+    get_period_back_keyboard,
+    get_cancel_keyboard,
+    get_dashboard_keyboard,
+    get_expenses_keyboard,
+    get_debts_keyboard
 )
-from src.services.sheets.client import get_sheets_client
+from src.bot.states.order_states import DateFilterStates
+from src.services.sheets.client import get_sheets_client, SheetsClient
 
 router = Router()
 
@@ -62,6 +73,7 @@ async def show_dashboard(message: Message):
             f"📈 Прибыль: <b>${data['profit']:,.2f}</b>\n"
             f"📊 Маржинальность: <b>{margin_pct:.1f}%</b>\n\n"
             f"💼 На счету: <b>${data['account_balance']:,.2f}</b>",
+            reply_markup=get_dashboard_keyboard(),
             parse_mode="HTML"
         )
 
@@ -86,7 +98,7 @@ async def show_add_data_menu(message: Message):
 
 @router.message(F.text == "👤 Заказчики")
 async def show_clients(message: Message):
-    """Show clients list with debts."""
+    """Show clients list as buttons for selection."""
     await message.answer("⏳ Загрузка данных...")
 
     try:
@@ -102,32 +114,22 @@ async def show_clients(message: Message):
             )
             return
 
-        # Build message
-        lines = ["👤 <b>ЗАКАЗЧИКИ</b>\n"]
+        # Get list of client names
+        client_names = [c["client"] for c in clients]
 
+        # Summary stats
         total_debt = sum(c["total_debt"] for c in clients)
         total_amount = sum(c["total_amount"] for c in clients)
 
-        lines.append(f"📊 Всего заказчиков: <b>{len(clients)}</b>")
-        lines.append(f"💰 Общая сумма заказов: <b>${total_amount:,.2f}</b>")
-        lines.append(f"⚠️ Общий долг: <b>${total_debt:,.2f}</b>\n")
-
-        lines.append("─" * 25)
-
-        for client in clients[:15]:  # Limit to 15 clients
-            debt_icon = "🔴" if client["total_debt"] > 0 else "🟢"
-            lines.append(
-                f"{debt_icon} <b>{client['client']}</b>\n"
-                f"   📦 Заказов: {client['orders_count']}\n"
-                f"   💵 Сумма: ${client['total_amount']:,.2f}\n"
-                f"   💳 Оплачено: ${client['total_paid']:,.2f}\n"
-                f"   ⚠️ Долг: ${client['total_debt']:,.2f}"
-            )
-
-        if len(clients) > 15:
-            lines.append(f"\n... и ещё {len(clients) - 15} заказчиков")
-
-        await message.answer("\n".join(lines), parse_mode="HTML")
+        await message.answer(
+            f"👤 <b>ЗАКАЗЧИКИ</b>\n\n"
+            f"📊 Всего заказчиков: <b>{len(clients)}</b>\n"
+            f"💰 Общая сумма заказов: <b>${total_amount:,.2f}</b>\n"
+            f"⚠️ Общий долг: <b>${total_debt:,.2f}</b>\n\n"
+            "Выберите заказчика для просмотра аналитики:",
+            reply_markup=get_client_info_keyboard(client_names),
+            parse_mode="HTML"
+        )
 
     except Exception as e:
         logger.error(f"Error loading clients: {e}")
@@ -137,9 +139,73 @@ async def show_clients(message: Message):
         )
 
 
+@router.callback_query(F.data.startswith("client_info:"))
+async def show_client_analytics(callback: CallbackQuery):
+    """Show detailed analytics for a specific client."""
+    client_name = callback.data.split(":", 1)[1]
+    await callback.answer()
+
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+        clients = await sheets.get_clients_with_debts()
+
+        # Find the specific client
+        client_data = None
+        for c in clients:
+            if c["client"] == client_name:
+                client_data = c
+                break
+
+        if not client_data:
+            await callback.message.edit_text(
+                f"❌ Заказчик '{client_name}' не найден.",
+                reply_markup=get_back_keyboard("menu:back"),
+                parse_mode="HTML"
+            )
+            return
+
+        # Debt icon
+        debt_icon = "🔴" if client_data["total_debt"] > 0 else "🟢"
+
+        # Build detailed analytics message
+        lines = [
+            f"👤 <b>АНАЛИТИКА: {client_name}</b>\n",
+            "─" * 30,
+            f"📦 Количество заказов: <b>{client_data['orders_count']}</b>",
+            f"💰 Общая сумма заказов: <b>${client_data['total_amount']:,.2f}</b>",
+            f"💳 Оплачено: <b>${client_data['total_paid']:,.2f}</b>",
+            f"{debt_icon} Долг: <b>${client_data['total_debt']:,.2f}</b>",
+        ]
+
+        # Average order amount
+        if client_data['orders_count'] > 0:
+            avg_order = client_data['total_amount'] / client_data['orders_count']
+            lines.append(f"📊 Средний заказ: <b>${avg_order:,.2f}</b>")
+
+        # Payment percentage
+        if client_data['total_amount'] > 0:
+            payment_pct = (client_data['total_paid'] / client_data['total_amount']) * 100
+            lines.append(f"💹 Процент оплаты: <b>{payment_pct:.1f}%</b>")
+
+        await callback.message.edit_text(
+            "\n".join(lines),
+            reply_markup=get_back_keyboard("menu:back"),
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        logger.error(f"Error loading client analytics: {e}")
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка загрузки!</b>\n\n{str(e)}",
+            reply_markup=get_back_keyboard("menu:back"),
+            parse_mode="HTML"
+        )
+
+
 @router.message(F.text == "🎨 Дизайнеры")
 async def show_designers(message: Message):
-    """Show designers list with earnings."""
+    """Show designers list as buttons for selection."""
     await message.answer("⏳ Загрузка данных...")
 
     try:
@@ -155,37 +221,86 @@ async def show_designers(message: Message):
             )
             return
 
-        # Build message
-        lines = ["🎨 <b>ДИЗАЙНЕРЫ</b>\n"]
+        # Get list of designer names
+        designer_names = [d["designer"] for d in designers]
 
+        # Summary stats
         total_earnings = sum(d["total_earnings"] for d in designers)
-        total_amount = sum(d["total_amount"] for d in designers)
         total_orders = sum(d["orders_count"] for d in designers)
 
-        lines.append(f"📊 Всего дизайнеров: <b>{len(designers)}</b>")
-        lines.append(f"📦 Всего заказов: <b>{total_orders}</b>")
-        lines.append(f"💰 Общая сумма заказов: <b>${total_amount:,.2f}</b>")
-        lines.append(f"💵 Общий заработок дизайнеров: <b>${total_earnings:,.2f}</b>\n")
-
-        lines.append("─" * 25)
-
-        for designer in designers[:15]:  # Limit to 15 designers
-            lines.append(
-                f"🎨 <b>{designer['designer']}</b>\n"
-                f"   📦 Заказов: {designer['orders_count']}\n"
-                f"   💰 Сумма заказов: ${designer['total_amount']:,.2f}\n"
-                f"   💵 Заработок: ${designer['total_earnings']:,.2f}"
-            )
-
-        if len(designers) > 15:
-            lines.append(f"\n... и ещё {len(designers) - 15} дизайнеров")
-
-        await message.answer("\n".join(lines), parse_mode="HTML")
+        await message.answer(
+            f"🎨 <b>ДИЗАЙНЕРЫ</b>\n\n"
+            f"📊 Всего дизайнеров: <b>{len(designers)}</b>\n"
+            f"📦 Всего заказов: <b>{total_orders}</b>\n"
+            f"💵 Общий заработок: <b>${total_earnings:,.2f}</b>\n\n"
+            "Выберите дизайнера для просмотра аналитики:",
+            reply_markup=get_designer_info_keyboard(designer_names),
+            parse_mode="HTML"
+        )
 
     except Exception as e:
         logger.error(f"Error loading designers: {e}")
         await message.answer(
             f"❌ <b>Ошибка загрузки!</b>\n\n{str(e)}",
+            parse_mode="HTML"
+        )
+
+
+@router.callback_query(F.data.startswith("designer_info:"))
+async def show_designer_analytics(callback: CallbackQuery):
+    """Show detailed analytics for a specific designer."""
+    designer_name = callback.data.split(":", 1)[1]
+    await callback.answer()
+
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+        designers = await sheets.get_designers_with_earnings()
+
+        # Find the specific designer
+        designer_data = None
+        for d in designers:
+            if d["designer"] == designer_name:
+                designer_data = d
+                break
+
+        if not designer_data:
+            await callback.message.edit_text(
+                f"❌ Дизайнер '{designer_name}' не найден.",
+                reply_markup=get_back_keyboard("menu:back"),
+                parse_mode="HTML"
+            )
+            return
+
+        # Build detailed analytics message
+        lines = [
+            f"🎨 <b>АНАЛИТИКА: {designer_name}</b>\n",
+            "─" * 30,
+            f"📦 Количество заказов: <b>{designer_data['orders_count']}</b>",
+            f"💰 Общая сумма заказов: <b>${designer_data['total_amount']:,.2f}</b>",
+            f"💵 Заработок дизайнера: <b>${designer_data['total_earnings']:,.2f}</b>",
+        ]
+
+        # Calculate agency profit from this designer
+        agency_profit = designer_data['total_amount'] - designer_data['total_earnings']
+        lines.append(f"🏢 Доход агентства: <b>${agency_profit:,.2f}</b>")
+
+        # Average order amount
+        if designer_data['orders_count'] > 0:
+            avg_order = designer_data['total_amount'] / designer_data['orders_count']
+            lines.append(f"📊 Средний заказ: <b>${avg_order:,.2f}</b>")
+
+        await callback.message.edit_text(
+            "\n".join(lines),
+            reply_markup=get_back_keyboard("menu:back"),
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        logger.error(f"Error loading designer analytics: {e}")
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка загрузки!</b>\n\n{str(e)}",
+            reply_markup=get_back_keyboard("menu:back"),
             parse_mode="HTML"
         )
 
@@ -253,7 +368,11 @@ async def show_expenses(message: Message):
         else:
             lines.append("Нет текущих расходов")
 
-        await message.answer("\n".join(lines), parse_mode="HTML")
+        await message.answer(
+            "\n".join(lines),
+            reply_markup=get_expenses_keyboard(),
+            parse_mode="HTML"
+        )
 
     except Exception as e:
         logger.error(f"Error loading expenses: {e}")
@@ -308,7 +427,7 @@ async def show_debts(message: Message):
         await message.answer(
             "\n".join(lines),
             parse_mode="HTML",
-            reply_markup=get_lists_menu()
+            reply_markup=get_debts_keyboard()
         )
 
     except Exception as e:
@@ -394,8 +513,13 @@ async def show_settings(message: Message):
 # Callback handlers for inline menu
 @router.callback_query(F.data == "menu:back")
 async def callback_menu_back(callback: CallbackQuery):
-    """Handle back button - delete inline menu."""
+    """Handle back button - return to main menu."""
     await callback.message.delete()
+    await callback.message.answer(
+        "🏠 <b>Главное меню</b>\n\nВыберите действие:",
+        reply_markup=get_main_menu(),
+        parse_mode="HTML"
+    )
     await callback.answer()
 
 
@@ -825,3 +949,628 @@ async def callback_analytics_clients(callback: CallbackQuery):
         logger.error(f"Error in analytics_clients: {e}")
         await callback.answer(f"Ошибка: {e}", show_alert=True)
     await callback.answer()
+
+
+# =============================================================================
+# DATE FILTER HANDLERS
+# =============================================================================
+
+PERIOD_LABELS = {
+    "today": "Сегодня",
+    "week": "Эта неделя",
+    "month": "Этот месяц",
+    "all": "Весь период"
+}
+
+
+@router.callback_query(F.data == "filter:designers")
+async def filter_designers(callback: CallbackQuery):
+    """Show period selection for designers filter."""
+    await callback.answer()
+    await callback.message.edit_text(
+        "📅 <b>Фильтр по датам</b>\n\n"
+        "Выберите период для просмотра данных по дизайнерам:",
+        reply_markup=get_period_keyboard("designers"),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data == "filter:clients")
+async def filter_clients(callback: CallbackQuery):
+    """Show period selection for clients filter."""
+    await callback.answer()
+    await callback.message.edit_text(
+        "📅 <b>Фильтр по датам</b>\n\n"
+        "Выберите период для просмотра данных по заказчикам:",
+        reply_markup=get_period_keyboard("clients"),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data.startswith("period:designers:"))
+async def period_designers(callback: CallbackQuery, state: FSMContext):
+    """Handle designer period selection."""
+    period = callback.data.split(":")[2]
+    await callback.answer()
+
+    # Handle custom date input
+    if period == "custom":
+        await state.update_data(filter_context="designers")
+        await callback.message.edit_text(
+            "📅 <b>Введите начальную дату</b>\n\n"
+            "Формат: ДД.ММ.ГГГГ (например, 01.01.2024)",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(DateFilterStates.waiting_for_start_date)
+        return
+
+    # Get period dates
+    start_date, end_date = SheetsClient.get_period_dates(period)
+    period_label = PERIOD_LABELS.get(period, period)
+
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+        designers = await sheets.get_designers_with_earnings(start_date, end_date)
+
+        if not designers:
+            await callback.message.edit_text(
+                f"🎨 <b>ДИЗАЙНЕРЫ</b>\n"
+                f"📅 Период: {period_label}\n\n"
+                "Нет данных за выбранный период.",
+                reply_markup=get_period_back_keyboard("designers"),
+                parse_mode="HTML"
+            )
+            return
+
+        # Get list of designer names
+        designer_names = [d["designer"] for d in designers]
+
+        # Summary stats
+        total_earnings = sum(d["total_earnings"] for d in designers)
+        total_orders = sum(d["orders_count"] for d in designers)
+
+        await callback.message.edit_text(
+            f"🎨 <b>ДИЗАЙНЕРЫ</b>\n"
+            f"📅 Период: {period_label}\n\n"
+            f"📊 Всего дизайнеров: <b>{len(designers)}</b>\n"
+            f"📦 Всего заказов: <b>{total_orders}</b>\n"
+            f"💵 Общий заработок: <b>${total_earnings:,.2f}</b>\n\n"
+            "Выберите дизайнера для просмотра аналитики:",
+            reply_markup=get_designer_info_keyboard(designer_names, period_label),
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        logger.error(f"Error filtering designers: {e}")
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка загрузки!</b>\n\n{str(e)}",
+            reply_markup=get_back_keyboard("menu:back"),
+            parse_mode="HTML"
+        )
+
+
+@router.callback_query(F.data.startswith("period:clients:"))
+async def period_clients(callback: CallbackQuery, state: FSMContext):
+    """Handle client period selection."""
+    period = callback.data.split(":")[2]
+    await callback.answer()
+
+    # Handle custom date input
+    if period == "custom":
+        await state.update_data(filter_context="clients")
+        await callback.message.edit_text(
+            "📅 <b>Введите начальную дату</b>\n\n"
+            "Формат: ДД.ММ.ГГГГ (например, 01.01.2024)",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(DateFilterStates.waiting_for_start_date)
+        return
+
+    # Get period dates
+    start_date, end_date = SheetsClient.get_period_dates(period)
+    period_label = PERIOD_LABELS.get(period, period)
+
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+        clients = await sheets.get_clients_with_debts(start_date, end_date)
+
+        if not clients:
+            await callback.message.edit_text(
+                f"👤 <b>ЗАКАЗЧИКИ</b>\n"
+                f"📅 Период: {period_label}\n\n"
+                "Нет данных за выбранный период.",
+                reply_markup=get_period_back_keyboard("clients"),
+                parse_mode="HTML"
+            )
+            return
+
+        # Get list of client names
+        client_names = [c["client"] for c in clients]
+
+        # Summary stats
+        total_debt = sum(c["total_debt"] for c in clients)
+        total_amount = sum(c["total_amount"] for c in clients)
+
+        await callback.message.edit_text(
+            f"👤 <b>ЗАКАЗЧИКИ</b>\n"
+            f"📅 Период: {period_label}\n\n"
+            f"📊 Всего заказчиков: <b>{len(clients)}</b>\n"
+            f"💰 Общая сумма заказов: <b>${total_amount:,.2f}</b>\n"
+            f"⚠️ Общий долг: <b>${total_debt:,.2f}</b>\n\n"
+            "Выберите заказчика для просмотра аналитики:",
+            reply_markup=get_client_info_keyboard(client_names, period_label),
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        logger.error(f"Error filtering clients: {e}")
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка загрузки!</b>\n\n{str(e)}",
+            reply_markup=get_back_keyboard("menu:back"),
+            parse_mode="HTML"
+        )
+
+
+@router.callback_query(F.data == "filter:dashboard")
+async def filter_dashboard(callback: CallbackQuery):
+    """Show period selection for dashboard filter."""
+    await callback.answer()
+    await callback.message.edit_text(
+        "📅 <b>Фильтр по датам</b>\n\n"
+        "Выберите период для просмотра панели агентства:",
+        reply_markup=get_period_keyboard("dashboard"),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data == "filter:expenses")
+async def filter_expenses(callback: CallbackQuery):
+    """Show period selection for expenses filter."""
+    await callback.answer()
+    await callback.message.edit_text(
+        "📅 <b>Фильтр по датам</b>\n\n"
+        "Выберите период для просмотра расходов:",
+        reply_markup=get_period_keyboard("expenses"),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data == "filter:debts")
+async def filter_debts(callback: CallbackQuery):
+    """Show period selection for debts filter."""
+    await callback.answer()
+    await callback.message.edit_text(
+        "📅 <b>Фильтр по датам</b>\n\n"
+        "Выберите период для просмотра должников:",
+        reply_markup=get_period_keyboard("debts"),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data == "lists:menu")
+async def show_lists_menu(callback: CallbackQuery):
+    """Show lists management menu."""
+    await callback.answer()
+    await callback.message.edit_text(
+        "📋 <b>Управление листами</b>\n\n"
+        "Выберите действие:",
+        reply_markup=get_lists_menu(),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data.startswith("period:dashboard:"))
+async def period_dashboard(callback: CallbackQuery, state: FSMContext):
+    """Handle dashboard period selection."""
+    period = callback.data.split(":")[2]
+    await callback.answer()
+
+    if period == "custom":
+        await state.update_data(filter_context="dashboard")
+        await callback.message.edit_text(
+            "📅 <b>Введите начальную дату</b>\n\n"
+            "Формат: ДД.ММ.ГГГГ (например, 01.01.2024)",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(DateFilterStates.waiting_for_start_date)
+        return
+
+    period_label = PERIOD_LABELS.get(period, period)
+
+    # For dashboard, we just show total stats - filtering would need more complex implementation
+    # For now, just show all data with period label
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+        data = await sheets.get_dashboard_data()
+
+        if "error" in data:
+            await callback.message.edit_text(
+                f"❌ <b>Ошибка загрузки данных</b>\n\n{data['error']}",
+                reply_markup=get_back_keyboard("menu:back"),
+                parse_mode="HTML"
+            )
+            return
+
+        margin_pct = data['margin'] * 100 if data['margin'] < 1 else data['margin']
+
+        await callback.message.edit_text(
+            f"📊 <b>ПАНЕЛЬ АГЕНТСТВА</b>\n"
+            f"📅 Период: {period_label}\n\n"
+            f"💰 Выручка: <b>${data['revenue']:,.2f}</b>\n"
+            f"💸 Затраты: <b>${data['expenses']:,.2f}</b>\n"
+            f"📈 Прибыль: <b>${data['profit']:,.2f}</b>\n"
+            f"📊 Маржинальность: <b>{margin_pct:.1f}%</b>\n\n"
+            f"💼 На счету: <b>${data['account_balance']:,.2f}</b>",
+            reply_markup=get_dashboard_keyboard(period_label),
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        logger.error(f"Error filtering dashboard: {e}")
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка загрузки!</b>\n\n{str(e)}",
+            reply_markup=get_back_keyboard("menu:back"),
+            parse_mode="HTML"
+        )
+
+
+@router.callback_query(F.data.startswith("period:expenses:"))
+async def period_expenses(callback: CallbackQuery, state: FSMContext):
+    """Handle expenses period selection."""
+    period = callback.data.split(":")[2]
+    await callback.answer()
+
+    if period == "custom":
+        await state.update_data(filter_context="expenses")
+        await callback.message.edit_text(
+            "📅 <b>Введите начальную дату</b>\n\n"
+            "Формат: ДД.ММ.ГГГГ (например, 01.01.2024)",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(DateFilterStates.waiting_for_start_date)
+        return
+
+    period_label = PERIOD_LABELS.get(period, period)
+
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+
+        total_amount = await sheets.get_total_expenses()
+        expenses = await sheets.get_expenses_by_category()
+        designer_payments = await sheets.get_designer_payments()
+
+        lines = [f"💸 <b>РАСХОДЫ</b>\n📅 Период: {period_label}\n"]
+
+        total_designer_payments = sum(p["amount"] for p in designer_payments)
+        total_manual_expenses = sum(e["total_amount"] for e in expenses) if expenses else 0
+
+        lines.append(f"💰 <b>Итого расходов: ${total_amount:,.2f}</b>\n")
+
+        lines.append("🎨 <b>ОПЛАТЫ ДИЗАЙНЕРАМ</b>")
+        lines.append("─" * 25)
+
+        if designer_payments:
+            lines.append(f"💵 Всего оплачено: <b>${total_designer_payments:,.2f}</b>\n")
+            for payment in designer_payments[:5]:
+                lines.append(f"🎨 <b>{payment['designer']}</b>: ${payment['amount']:,.2f}")
+        else:
+            lines.append("Нет оплат дизайнерам")
+
+        lines.append("\n" + "─" * 25)
+        lines.append("\n📁 <b>ТЕКУЩИЕ РАСХОДЫ</b>")
+
+        if expenses:
+            lines.append(f"💵 Сумма: <b>${total_manual_expenses:,.2f}</b>\n")
+            for expense in expenses[:5]:
+                lines.append(f"📁 <b>{expense['category']}</b>: ${expense['total_amount']:,.2f}")
+        else:
+            lines.append("Нет текущих расходов")
+
+        await callback.message.edit_text(
+            "\n".join(lines),
+            reply_markup=get_expenses_keyboard(period_label),
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        logger.error(f"Error filtering expenses: {e}")
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка загрузки!</b>\n\n{str(e)}",
+            reply_markup=get_back_keyboard("menu:back"),
+            parse_mode="HTML"
+        )
+
+
+@router.callback_query(F.data.startswith("period:debts:"))
+async def period_debts(callback: CallbackQuery, state: FSMContext):
+    """Handle debts period selection."""
+    period = callback.data.split(":")[2]
+    await callback.answer()
+
+    if period == "custom":
+        await state.update_data(filter_context="debts")
+        await callback.message.edit_text(
+            "📅 <b>Введите начальную дату</b>\n\n"
+            "Формат: ДД.ММ.ГГГГ (например, 01.01.2024)",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        await state.set_state(DateFilterStates.waiting_for_start_date)
+        return
+
+    period_label = PERIOD_LABELS.get(period, period)
+
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+        debtors = await sheets.get_debtors()
+        whitelist = await sheets.get_whitelist_clients()
+        blacklist = await sheets.get_blacklist_clients()
+
+        lines = [f"⚠️ <b>ДОЛГИ И ЛИСТЫ</b>\n📅 Период: {period_label}\n"]
+
+        lines.append("💸 <b>ДОЛЖНИКИ</b>")
+        lines.append("─" * 25)
+
+        if not debtors:
+            lines.append("✅ Нет должников!")
+        else:
+            total_debt = sum(d["total_debt"] for d in debtors)
+            lines.append(f"⚠️ Общий долг: <b>${total_debt:,.2f}</b>\n")
+
+            for debtor in debtors[:7]:
+                lines.append(
+                    f"🔴 <b>{debtor['client']}</b>: ${debtor['total_debt']:,.2f}"
+                )
+
+            if len(debtors) > 7:
+                lines.append(f"\n... и ещё {len(debtors) - 7} должников")
+
+        lines.append("\n📋 <b>ЛИСТЫ</b>")
+        lines.append(f"🟢 White: {len(whitelist)} | 🔴 Black: {len(blacklist)}")
+
+        await callback.message.edit_text(
+            "\n".join(lines),
+            reply_markup=get_debts_keyboard(period_label),
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        logger.error(f"Error filtering debts: {e}")
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка загрузки!</b>\n\n{str(e)}",
+            reply_markup=get_back_keyboard("menu:back"),
+            parse_mode="HTML"
+        )
+
+
+# =============================================================================
+# CUSTOM DATE INPUT HANDLERS
+# =============================================================================
+
+@router.message(DateFilterStates.waiting_for_start_date)
+async def enter_start_date(message: Message, state: FSMContext):
+    """Handle start date input."""
+    date_str = message.text.strip()
+
+    # Validate date format
+    parsed = SheetsClient.parse_date(date_str)
+    if not parsed:
+        await message.answer(
+            "❌ <b>Неверный формат даты!</b>\n\n"
+            "Пожалуйста, введите дату в формате ДД.ММ.ГГГГ\n"
+            "Например: 01.01.2024",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
+    await state.update_data(start_date=parsed, start_date_str=date_str)
+    await message.answer(
+        f"✅ Начальная дата: <b>{date_str}</b>\n\n"
+        "📅 <b>Введите конечную дату</b>\n\n"
+        "Формат: ДД.ММ.ГГГГ (например, 31.12.2024)",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="HTML"
+    )
+    await state.set_state(DateFilterStates.waiting_for_end_date)
+
+
+@router.message(DateFilterStates.waiting_for_end_date)
+async def enter_end_date(message: Message, state: FSMContext):
+    """Handle end date input and show filtered results."""
+    date_str = message.text.strip()
+
+    # Validate date format
+    parsed = SheetsClient.parse_date(date_str)
+    if not parsed:
+        await message.answer(
+            "❌ <b>Неверный формат даты!</b>\n\n"
+            "Пожалуйста, введите дату в формате ДД.ММ.ГГГГ\n"
+            "Например: 31.12.2024",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
+    data = await state.get_data()
+    start_date = data.get("start_date")
+    start_date_str = data.get("start_date_str")
+    context = data.get("filter_context", "designers")
+
+    # Set end date to end of day
+    end_date = parsed.replace(hour=23, minute=59, second=59)
+    period_label = f"{start_date_str} - {date_str}"
+
+    await state.clear()
+
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+
+        if context == "designers":
+            designers = await sheets.get_designers_with_earnings(start_date, end_date)
+
+            if not designers:
+                await message.answer(
+                    f"🎨 <b>ДИЗАЙНЕРЫ</b>\n"
+                    f"📅 Период: {period_label}\n\n"
+                    "Нет данных за выбранный период.",
+                    reply_markup=get_main_menu(),
+                    parse_mode="HTML"
+                )
+                return
+
+            designer_names = [d["designer"] for d in designers]
+            total_earnings = sum(d["total_earnings"] for d in designers)
+            total_orders = sum(d["orders_count"] for d in designers)
+
+            await message.answer(
+                f"🎨 <b>ДИЗАЙНЕРЫ</b>\n"
+                f"📅 Период: {period_label}\n\n"
+                f"📊 Всего дизайнеров: <b>{len(designers)}</b>\n"
+                f"📦 Всего заказов: <b>{total_orders}</b>\n"
+                f"💵 Общий заработок: <b>${total_earnings:,.2f}</b>\n\n"
+                "Выберите дизайнера для просмотра аналитики:",
+                reply_markup=get_designer_info_keyboard(designer_names, period_label),
+                parse_mode="HTML"
+            )
+
+        elif context == "clients":
+            clients = await sheets.get_clients_with_debts(start_date, end_date)
+
+            if not clients:
+                await message.answer(
+                    f"👤 <b>ЗАКАЗЧИКИ</b>\n"
+                    f"📅 Период: {period_label}\n\n"
+                    "Нет данных за выбранный период.",
+                    reply_markup=get_main_menu(),
+                    parse_mode="HTML"
+                )
+                return
+
+            client_names = [c["client"] for c in clients]
+            total_debt = sum(c["total_debt"] for c in clients)
+            total_amount = sum(c["total_amount"] for c in clients)
+
+            await message.answer(
+                f"👤 <b>ЗАКАЗЧИКИ</b>\n"
+                f"📅 Период: {period_label}\n\n"
+                f"📊 Всего заказчиков: <b>{len(clients)}</b>\n"
+                f"💰 Общая сумма заказов: <b>${total_amount:,.2f}</b>\n"
+                f"⚠️ Общий долг: <b>${total_debt:,.2f}</b>\n\n"
+                "Выберите заказчика для просмотра аналитики:",
+                reply_markup=get_client_info_keyboard(client_names, period_label),
+                parse_mode="HTML"
+            )
+
+        elif context == "dashboard":
+            # Dashboard uses formulas that don't support date filtering
+            data = await sheets.get_dashboard_data()
+
+            if "error" in data:
+                await message.answer(
+                    f"❌ <b>Ошибка загрузки данных</b>\n\n{data['error']}",
+                    reply_markup=get_back_keyboard("menu:back"),
+                    parse_mode="HTML"
+                )
+                return
+
+            margin_pct = data['margin'] * 100 if data['margin'] < 1 else data['margin']
+
+            await message.answer(
+                f"📊 <b>ПАНЕЛЬ АГЕНТСТВА</b>\n"
+                f"📅 Период: {period_label}\n\n"
+                f"💰 Выручка: <b>${data['revenue']:,.2f}</b>\n"
+                f"💸 Затраты: <b>${data['expenses']:,.2f}</b>\n"
+                f"📈 Прибыль: <b>${data['profit']:,.2f}</b>\n"
+                f"📊 Маржинальность: <b>{margin_pct:.1f}%</b>\n\n"
+                f"💼 На счету: <b>${data['account_balance']:,.2f}</b>",
+                reply_markup=get_dashboard_keyboard(period_label),
+                parse_mode="HTML"
+            )
+
+        elif context == "expenses":
+            # Expenses don't support date filtering currently
+            total_amount = await sheets.get_total_expenses()
+            expenses = await sheets.get_expenses_by_category()
+            designer_payments = await sheets.get_designer_payments()
+
+            lines = [f"💸 <b>РАСХОДЫ</b>\n📅 Период: {period_label}\n"]
+
+            total_designer_payments = sum(p["amount"] for p in designer_payments)
+            total_manual_expenses = sum(e["total_amount"] for e in expenses) if expenses else 0
+
+            lines.append(f"💰 <b>Итого расходов: ${total_amount:,.2f}</b>\n")
+
+            lines.append("🎨 <b>ОПЛАТЫ ДИЗАЙНЕРАМ</b>")
+            lines.append("─" * 25)
+
+            if designer_payments:
+                lines.append(f"💵 Всего оплачено: <b>${total_designer_payments:,.2f}</b>\n")
+                for payment in designer_payments[:5]:
+                    lines.append(f"🎨 <b>{payment['designer']}</b>: ${payment['amount']:,.2f}")
+            else:
+                lines.append("Нет оплат дизайнерам")
+
+            lines.append("\n" + "─" * 25)
+            lines.append("\n📁 <b>ТЕКУЩИЕ РАСХОДЫ</b>")
+
+            if expenses:
+                lines.append(f"💵 Сумма: <b>${total_manual_expenses:,.2f}</b>\n")
+                for expense in expenses[:5]:
+                    lines.append(f"📁 <b>{expense['category']}</b>: ${expense['total_amount']:,.2f}")
+            else:
+                lines.append("Нет текущих расходов")
+
+            await message.answer(
+                "\n".join(lines),
+                reply_markup=get_expenses_keyboard(period_label),
+                parse_mode="HTML"
+            )
+
+        elif context == "debts":
+            clients = await sheets.get_clients_with_debts(start_date, end_date)
+            debtors = [c for c in clients if c.get("total_debt", 0) > 0]
+
+            if not debtors:
+                await message.answer(
+                    f"⚠️ <b>ДОЛГИ/ЛИСТЫ</b>\n"
+                    f"📅 Период: {period_label}\n\n"
+                    "✅ Нет должников за выбранный период!",
+                    reply_markup=get_debts_keyboard(period_label),
+                    parse_mode="HTML"
+                )
+            else:
+                total_debt = sum(c.get("total_debt", 0) for c in debtors)
+
+                debtors_text = "\n".join(
+                    f"  • {c['client']}: <b>${c['total_debt']:,.2f}</b>"
+                    for c in sorted(debtors, key=lambda x: -x.get("total_debt", 0))[:10]
+                )
+
+                await message.answer(
+                    f"⚠️ <b>ДОЛГИ/ЛИСТЫ</b>\n"
+                    f"📅 Период: {period_label}\n\n"
+                    f"💰 Общий долг: <b>${total_debt:,.2f}</b>\n"
+                    f"👤 Должников: <b>{len(debtors)}</b>\n\n"
+                    f"<b>Топ должников:</b>\n{debtors_text}",
+                    reply_markup=get_debts_keyboard(period_label),
+                    parse_mode="HTML"
+                )
+
+    except Exception as e:
+        logger.error(f"Error with custom date filter: {e}")
+        await message.answer(
+            f"❌ <b>Ошибка загрузки!</b>\n\n{str(e)}",
+            reply_markup=get_main_menu(),
+            parse_mode="HTML"
+        )
