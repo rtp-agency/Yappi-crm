@@ -1,74 +1,76 @@
 # Запуск бота Yuppy CRM
 
-## Данные для настройки
-
-| Что | Значение |
-|-----|----------|
-| Репозиторий | https://github.com/rtp-agency/Yappi-crm |
-| BOT_TOKEN | *(получить от владельца)* |
-| SPREADSHEET_ID | *(получить от владельца)* |
-| credentials.json | *(получить от владельца)* |
+## Вам переданы файлы:
+- `credentials.json` - ключ доступа к Google Sheets
+- `.env` - настройки бота
 
 ---
 
-## Установка (5 минут)
+## Установка
 
+### 1. Установить Python
+Скачать и установить Python 3.10+: https://www.python.org/downloads/
+
+При установке поставить галочку **"Add Python to PATH"**
+
+### 2. Скачать проект
 ```bash
-# 1. Скачать проект
 git clone https://github.com/rtp-agency/Yappi-crm.git
 cd Yappi-crm
+```
 
-# 2. Установить зависимости
+### 3. Установить зависимости
+```bash
 pip install -r requirements.txt
+```
 
-# 3. Создать папку data
+### 4. Положить файлы в папку проекта
+Скопировать полученные файлы `credentials.json` и `.env` в папку `Yappi-crm`
+
+### 5. Создать папку data
+```bash
 mkdir data
+```
 
-# 4. Положить credentials.json в папку проекта
-
-# 5. Создать файл .env (содержимое ниже)
-
-# 6. Запустить
+### 6. Запустить бота
+```bash
 python -m src.main
 ```
 
----
-
-## Файл .env
-
-Создать файл `.env` в папке проекта:
-
+Если всё правильно - увидите в консоли:
 ```
-BOT_TOKEN=сюда_токен_бота
-SPREADSHEET_ID=сюда_id_таблицы
-ADMIN_IDS=сюда_telegram_id
-CREDENTIALS_FILE=credentials.json
+INFO | Bot starting...
+INFO | Google Sheets client ready
 ```
 
 ---
 
-## Как дать доступ к боту
+## Управление
 
-Бот работает только для пользователей из `ADMIN_IDS`.
+| Действие | Команда |
+|----------|---------|
+| Запустить | `python -m src.main` |
+| Остановить | `Ctrl+C` |
 
-**Узнать Telegram ID:**
-1. Написать боту @userinfobot в Telegram
-2. Он ответит число (например: `906038550`)
+---
 
-**Добавить пользователя:**
-```
-ADMIN_IDS=906038550,123456789,555555555
-```
-*(ID через запятую, без пробелов)*
+## Добавить нового пользователя
 
-После изменения - перезапустить бота (`Ctrl+C`, потом `python -m src.main`)
+1. Пользователь пишет боту [@userinfobot](https://t.me/userinfobot) в Telegram
+2. Получает свой ID (число, например: `123456789`)
+3. Открыть файл `.env`, найти строку `ADMIN_IDS=...`
+4. Добавить новый ID через запятую:
+   ```
+   ADMIN_IDS=906038550,123456789
+   ```
+5. Перезапустить бота (`Ctrl+C`, потом `python -m src.main`)
 
 ---
 
 ## Ошибки
 
-| Ошибка | Что делать |
-|--------|------------|
-| User not in whitelist | Добавь Telegram ID в ADMIN_IDS |
-| credentials.json not found | Положи файл в папку проекта |
-| Invalid token | Проверь BOT_TOKEN |
+| Ошибка | Решение |
+|--------|---------|
+| `User not in whitelist` | Добавьте Telegram ID в ADMIN_IDS (см. выше) |
+| `credentials.json not found` | Файл не в папке проекта |
+| `No module named...` | Выполните `pip install -r requirements.txt` |
