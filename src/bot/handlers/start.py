@@ -1189,12 +1189,10 @@ async def period_dashboard(callback: CallbackQuery, state: FSMContext):
 
     period_label = PERIOD_LABELS.get(period, period)
 
-    # For dashboard, we just show total stats - filtering would need more complex implementation
-    # For now, just show all data with period label
     try:
         sheets = get_sheets_client()
         await sheets.initialize()
-        data = await sheets.get_dashboard_data()
+        data = await sheets.get_dashboard_data_filtered(period)
 
         if "error" in data:
             await callback.message.edit_text(
@@ -1486,8 +1484,8 @@ async def enter_end_date(message: Message, state: FSMContext):
             )
 
         elif context == "dashboard":
-            # Dashboard uses formulas that don't support date filtering
-            data = await sheets.get_dashboard_data()
+            # Use filtered dashboard data with custom date range
+            data = await sheets.get_dashboard_data_filtered("custom", start_date, end_date)
 
             if "error" in data:
                 await message.answer(

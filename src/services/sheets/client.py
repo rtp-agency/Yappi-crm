@@ -2705,6 +2705,135 @@ class SheetsClient:
                 "error": "Не удалось загрузить данные"
             }
 
+    async def get_dashboard_data_filtered(self, period: str, start_date: str = None, end_date: str = None) -> Dict[str, Any]:
+        """
+        Get dashboard data filtered by period.
+
+        Args:
+            period: 'today', 'week', 'month', 'all', or 'custom'
+            start_date: Start date for custom range (DD.MM.YYYY)
+            end_date: End date for custom range (DD.MM.YYYY)
+
+        Returns:
+            Dict with filtered dashboard metrics
+        """
+        await self.initialize()
+
+        try:
+            from datetime import datetime, timedelta
+            from src.config.sheets_config import get_sheet_config
+
+            # Read all data from GENERAL (columns B-U from row 13)
+            data_config = get_sheet_config("general_data")
+            pl_config = get_sheet_config("general_pl")
+
+            # Read P&L data (B-E from row 13) - B=date, C=revenue, D=expenses, E=profit
+            pl_data = await self.get_range("GENERAL", f"B{pl_config.start_row}:E500")
+
+            # Calculate date range based on period
+            today = datetime.now()
+
+            if period == "today":
+                target_dates = [today.strftime("%d.%m")]
+            elif period == "week":
+                target_dates = [(today - timedelta(days=i)).strftime("%d.%m") for i in range(7)]
+            elif period == "month":
+                target_month = today.strftime("%m")
+                target_dates = None  # Will filter by month
+            elif period == "custom" and start_date and end_date:
+                # Parse custom date range
+                try:
+                    start = datetime.strptime(start_date, "%d.%m.%Y")
+                    end = datetime.strptime(end_date, "%d.%m.%Y")
+                    delta = (end - start).days
+                    target_dates = [(start + timedelta(days=i)).strftime("%d.%m") for i in range(delta + 1)]
+                except ValueError:
+                    target_dates = None
+            else:  # 'all'
+                target_dates = None
+
+            # Filter and sum
+            revenue = 0
+            expenses = 0
+            profit = 0
+
+            if pl_data:
+                for row in pl_data:
+                    if not row or len(row) < 4:
+                        continue
+
+                    row_date = str(row[0]).strip() if row[0] else ""
+                    if not row_date:
+                        continue
+
+                    # Check if row matches filter
+                    include_row = False
+                    if target_dates is None:
+                        if period == "month":
+                            # Check if date is in current month (format: DD.MM)
+                            if "." in row_date:
+                                row_month = row_date.split(".")[1] if len(row_date.split(".")) > 1 else ""
+                                include_row = row_month == target_month
+                        else:
+                            include_row = True  # 'all'
+                    else:
+                        include_row = row_date in target_dates
+
+                    if include_row:
+                        try:
+                            revenue += float(row[1]) if len(row) > 1 and row[1] else 0
+                            expenses += float(row[2]) if len(row) > 2 and row[2] else 0
+                            profit += float(row[3]) if len(row) > 3 and row[3] else 0
+                        except (ValueError, TypeError):
+                            continue
+
+            # Calculate margin
+            margin = (profit / revenue * 100) if revenue > 0 else 0
+
+            # Read current account balances (T and U columns - last values)
+            tu_data = await self.get_range("GENERAL", f"T{data_config.start_row}:U500")
+
+            balance_1 = 0
+            balance_2 = 0
+            if tu_data:
+                for row in reversed(tu_data):
+                    if row and len(row) > 0:
+                        if row[0] is not None and row[0] != "":
+                            try:
+                                balance_1 = float(row[0])
+                            except (ValueError, TypeError):
+                                pass
+                        if len(row) > 1 and row[1] is not None and row[1] != "":
+                            try:
+                                balance_2 = float(row[1])
+                            except (ValueError, TypeError):
+                                pass
+                        if balance_1 != 0 or balance_2 != 0:
+                            break
+
+            return {
+                "revenue": revenue,
+                "expenses": expenses,
+                "profit": profit,
+                "margin": margin,
+                "balance_1": balance_1,
+                "balance_2": balance_2,
+                "account_balance": balance_1 + balance_2
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting filtered dashboard data: {e}")
+            return {
+                "revenue": 0,
+                "expenses": 0,
+                "profit": 0,
+                "margin": 0,
+                "balance_1": 0,
+                "balance_2": 0,
+                "account_balance": 0,
+                "error": str(e)
+            }
+
     async def get_dashboard_data(self) -> Dict[str, Any]:
         """
         Get dashboard data from GENERAL sheet.
