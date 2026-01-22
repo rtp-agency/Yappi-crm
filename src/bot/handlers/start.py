@@ -66,13 +66,20 @@ async def show_dashboard(message: Message):
         # Format margin as percentage
         margin_pct = data['margin'] * 100 if data['margin'] < 1 else data['margin']
 
+        balance_1 = data.get('balance_1', 0)
+        balance_2 = data.get('balance_2', 0)
+        total_balance = balance_1 + balance_2
+
         await message.answer(
             "📊 <b>ПАНЕЛЬ АГЕНТСТВА</b>\n\n"
             f"💰 Выручка: <b>${data['revenue']:,.2f}</b>\n"
             f"💸 Затраты: <b>${data['expenses']:,.2f}</b>\n"
             f"📈 Прибыль: <b>${data['profit']:,.2f}</b>\n"
             f"📊 Маржинальность: <b>{margin_pct:.1f}%</b>\n\n"
-            f"💼 На счету: <b>${data['account_balance']:,.2f}</b>",
+            f"💼 <b>Счета:</b>\n"
+            f"   Операционный: <b>${balance_1:,.2f}</b>\n"
+            f"   Резервный: <b>${balance_2:,.2f}</b>\n"
+            f"   💰 Всего: <b>${total_balance:,.2f}</b>",
             reply_markup=get_dashboard_keyboard(),
             parse_mode="HTML"
         )
@@ -1198,6 +1205,9 @@ async def period_dashboard(callback: CallbackQuery, state: FSMContext):
             return
 
         margin_pct = data['margin'] * 100 if data['margin'] < 1 else data['margin']
+        balance_1 = data.get('balance_1', 0)
+        balance_2 = data.get('balance_2', 0)
+        total_balance = balance_1 + balance_2
 
         await callback.message.edit_text(
             f"📊 <b>ПАНЕЛЬ АГЕНТСТВА</b>\n"
@@ -1206,7 +1216,10 @@ async def period_dashboard(callback: CallbackQuery, state: FSMContext):
             f"💸 Затраты: <b>${data['expenses']:,.2f}</b>\n"
             f"📈 Прибыль: <b>${data['profit']:,.2f}</b>\n"
             f"📊 Маржинальность: <b>{margin_pct:.1f}%</b>\n\n"
-            f"💼 На счету: <b>${data['account_balance']:,.2f}</b>",
+            f"💼 <b>Счета:</b>\n"
+            f"   Операционный: <b>${balance_1:,.2f}</b>\n"
+            f"   Резервный: <b>${balance_2:,.2f}</b>\n"
+            f"   💰 Всего: <b>${total_balance:,.2f}</b>",
             reply_markup=get_dashboard_keyboard(period_label),
             parse_mode="HTML"
         )
@@ -1485,6 +1498,9 @@ async def enter_end_date(message: Message, state: FSMContext):
                 return
 
             margin_pct = data['margin'] * 100 if data['margin'] < 1 else data['margin']
+            balance_1 = data.get('balance_1', 0)
+            balance_2 = data.get('balance_2', 0)
+            total_balance = balance_1 + balance_2
 
             await message.answer(
                 f"📊 <b>ПАНЕЛЬ АГЕНТСТВА</b>\n"
@@ -1493,7 +1509,10 @@ async def enter_end_date(message: Message, state: FSMContext):
                 f"💸 Затраты: <b>${data['expenses']:,.2f}</b>\n"
                 f"📈 Прибыль: <b>${data['profit']:,.2f}</b>\n"
                 f"📊 Маржинальность: <b>{margin_pct:.1f}%</b>\n\n"
-                f"💼 На счету: <b>${data['account_balance']:,.2f}</b>",
+                f"💼 <b>Счета:</b>\n"
+                f"   Операционный: <b>${balance_1:,.2f}</b>\n"
+                f"   Резервный: <b>${balance_2:,.2f}</b>\n"
+                f"   💰 Всего: <b>${total_balance:,.2f}</b>",
                 reply_markup=get_dashboard_keyboard(period_label),
                 parse_mode="HTML"
             )

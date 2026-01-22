@@ -2738,29 +2738,42 @@ class SheetsClient:
                 profit = float(row[4]) if len(row) > 4 and row[4] else 0
                 margin = float(row[6]) if len(row) > 6 and row[6] else 0
 
-            # Read column T to find last value (account balance)
-            # Get config for GENERAL data section
+            # Read columns T and U to find last values (account balances)
+            # T = Остаток на 1 счете (operational)
+            # U = Остаток на 2 счете (reserve)
             from src.config.sheets_config import get_sheet_config as get_config
             data_config = get_config("general_data")
-            t_data = await self.get_range("GENERAL", f"T{data_config.start_row}:T100")
+            tu_data = await self.get_range("GENERAL", f"T{data_config.start_row}:U100")
 
-            account_balance = 0
-            if t_data:
-                # Find last non-empty value
-                for row in reversed(t_data):
-                    if row and row[0] is not None and row[0] != "":
-                        try:
-                            account_balance = float(row[0])
+            balance_1 = 0  # Operational account
+            balance_2 = 0  # Reserve account
+            if tu_data:
+                # Find last non-empty row
+                for row in reversed(tu_data):
+                    if row and len(row) > 0:
+                        # Get balance_1 from column T
+                        if row[0] is not None and row[0] != "":
+                            try:
+                                balance_1 = float(row[0])
+                            except (ValueError, TypeError):
+                                pass
+                        # Get balance_2 from column U
+                        if len(row) > 1 and row[1] is not None and row[1] != "":
+                            try:
+                                balance_2 = float(row[1])
+                            except (ValueError, TypeError):
+                                pass
+                        if balance_1 != 0 or balance_2 != 0:
                             break
-                        except (ValueError, TypeError):
-                            continue
 
             return {
                 "revenue": revenue,
                 "expenses": expenses,
                 "profit": profit,
                 "margin": margin,
-                "account_balance": account_balance
+                "balance_1": balance_1,
+                "balance_2": balance_2,
+                "account_balance": balance_1 + balance_2  # Total for backwards compatibility
             }
 
         except Exception as e:
