@@ -1283,36 +1283,30 @@ class SheetsClient:
         """
         config = get_sheet_config("pure_income")
 
-        # Find last row with data (start_row = 14)
+        # Find last row with data
         last_row = await self.get_last_data_row(
             config.name,
             config.data_start_col,  # F
-            config.start_row  # Start checking from row 14
+            config.start_row
         )
 
-        # If no bot data found, use row 13 (last existing data row) as source for copying
+        # Determine new row
         if last_row < config.start_row:
-            source_row = config.start_row - 1  # Row 13 - copy format from here
-            new_row = config.start_row  # Row 14 - first bot data row
+            # No existing data - write to first data row without copying headers
+            new_row = config.start_row
+            logger.debug(f"No existing data, writing to row {new_row}")
         else:
+            # Has existing data - insert new row after last and copy formulas
             source_row = last_row
             new_row = last_row + 1
-
-        # Always insert a new row and copy format + formulas from above
-        inserted = await self.insert_row_with_formulas(config.name, source_row)
-        if not inserted:
-            logger.warning("Failed to insert row, using write_row")
-            return await self.write_row(
-                sheet_key="pure_income",
-                operation_id=operation_id,
-                data=[date, category, amount]
-            )
+            inserted = await self.insert_row_with_formulas(config.name, source_row)
+            if not inserted:
+                logger.warning("Failed to insert row")
 
         # Write operation_id to column A (white text - invisible)
         await self.update_cell(config.name, new_row, "A", operation_id)
 
         # Write data to columns F, G, H
-        # Format is already copied from the row above via PASTE_NORMAL
         await self.update_cell(config.name, new_row, "F", date)
         await self.update_cell(config.name, new_row, "G", category)
         await self.update_cell(config.name, new_row, "H", amount)
