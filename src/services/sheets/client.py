@@ -2730,6 +2730,9 @@ class SheetsClient:
             # Read P&L data (B-E from row 13) - B=date, C=revenue, D=expenses, E=profit
             pl_data = await self.get_range("GENERAL", f"B{pl_config.start_row}:E500")
 
+            # Read data columns (G-O from row 9) - G=date, O=pure_income (index 8)
+            data_rows = await self.get_range("GENERAL", f"G{data_config.start_row}:O500")
+
             # Calculate date range based on period
             today = datetime.now()
 
@@ -2787,6 +2790,36 @@ class SheetsClient:
                         except (ValueError, TypeError):
                             continue
 
+            # Calculate pure income from data rows (column O = index 8)
+            pure_income = 0
+            if data_rows:
+                for row in data_rows:
+                    if not row or len(row) < 1:
+                        continue
+
+                    row_date = str(row[0]).strip() if row[0] else ""
+                    if not row_date:
+                        continue
+
+                    # Check if row matches filter
+                    include_row = False
+                    if target_dates is None:
+                        if period == "month":
+                            if "." in row_date:
+                                row_month = row_date.split(".")[1] if len(row_date.split(".")) > 1 else ""
+                                include_row = row_month == target_month
+                        else:
+                            include_row = True
+                    else:
+                        include_row = row_date in target_dates
+
+                    if include_row and len(row) > 8:
+                        try:
+                            pure_val = float(row[8]) if row[8] else 0
+                            pure_income += pure_val
+                        except (ValueError, TypeError):
+                            pass
+
             # Calculate margin
             margin = (profit / revenue * 100) if revenue > 0 else 0
 
@@ -2816,6 +2849,7 @@ class SheetsClient:
                 "expenses": expenses,
                 "profit": profit,
                 "margin": margin,
+                "pure_income": pure_income,
                 "balance_1": balance_1,
                 "balance_2": balance_2,
                 "account_balance": balance_1 + balance_2
@@ -2828,6 +2862,7 @@ class SheetsClient:
                 "expenses": 0,
                 "profit": 0,
                 "margin": 0,
+                "pure_income": 0,
                 "balance_1": 0,
                 "balance_2": 0,
                 "account_balance": 0,
@@ -2874,6 +2909,17 @@ class SheetsClient:
             data_config = get_config("general_data")
             tu_data = await self.get_range("GENERAL", f"T{data_config.start_row}:U100")
 
+            # Read column O to sum pure income
+            o_data = await self.get_range("GENERAL", f"O{data_config.start_row}:O500")
+            pure_income = 0
+            if o_data:
+                for row in o_data:
+                    if row and row[0]:
+                        try:
+                            pure_income += float(row[0])
+                        except (ValueError, TypeError):
+                            pass
+
             balance_1 = 0  # Operational account
             balance_2 = 0  # Reserve account
             if tu_data:
@@ -2900,9 +2946,10 @@ class SheetsClient:
                 "expenses": expenses,
                 "profit": profit,
                 "margin": margin,
+                "pure_income": pure_income,
                 "balance_1": balance_1,
                 "balance_2": balance_2,
-                "account_balance": balance_1 + balance_2  # Total for backwards compatibility
+                "account_balance": balance_1 + balance_2
             }
 
         except Exception as e:
@@ -2912,6 +2959,9 @@ class SheetsClient:
                 "expenses": 0,
                 "profit": 0,
                 "margin": 0,
+                "pure_income": 0,
+                "balance_1": 0,
+                "balance_2": 0,
                 "account_balance": 0,
                 "error": str(e)
             }

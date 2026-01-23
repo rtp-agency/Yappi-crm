@@ -69,13 +69,15 @@ async def show_dashboard(message: Message):
         balance_1 = data.get('balance_1', 0)
         balance_2 = data.get('balance_2', 0)
         total_balance = balance_1 + balance_2
+        pure_income = data.get('pure_income', 0)
 
         await message.answer(
             "📊 <b>ПАНЕЛЬ АГЕНТСТВА</b>\n\n"
             f"💰 Выручка: <b>${data['revenue']:,.2f}</b>\n"
             f"💸 Затраты: <b>${data['expenses']:,.2f}</b>\n"
             f"📈 Прибыль: <b>${data['profit']:,.2f}</b>\n"
-            f"📊 Маржинальность: <b>{margin_pct:.1f}%</b>\n\n"
+            f"📊 Маржинальность: <b>{margin_pct:.1f}%</b>\n"
+            f"💵 Чистый доход: <b>${pure_income:,.2f}</b>\n\n"
             f"💼 <b>Счета:</b>\n"
             f"   Операционный: <b>${balance_1:,.2f}</b>\n"
             f"   Резервный: <b>${balance_2:,.2f}</b>\n"
@@ -1206,6 +1208,7 @@ async def period_dashboard(callback: CallbackQuery, state: FSMContext):
         balance_1 = data.get('balance_1', 0)
         balance_2 = data.get('balance_2', 0)
         total_balance = balance_1 + balance_2
+        pure_income = data.get('pure_income', 0)
 
         await callback.message.edit_text(
             f"📊 <b>ПАНЕЛЬ АГЕНТСТВА</b>\n"
@@ -1213,7 +1216,8 @@ async def period_dashboard(callback: CallbackQuery, state: FSMContext):
             f"💰 Выручка: <b>${data['revenue']:,.2f}</b>\n"
             f"💸 Затраты: <b>${data['expenses']:,.2f}</b>\n"
             f"📈 Прибыль: <b>${data['profit']:,.2f}</b>\n"
-            f"📊 Маржинальность: <b>{margin_pct:.1f}%</b>\n\n"
+            f"📊 Маржинальность: <b>{margin_pct:.1f}%</b>\n"
+            f"💵 Чистый доход: <b>${pure_income:,.2f}</b>\n\n"
             f"💼 <b>Счета:</b>\n"
             f"   Операционный: <b>${balance_1:,.2f}</b>\n"
             f"   Резервный: <b>${balance_2:,.2f}</b>\n"
@@ -1499,6 +1503,7 @@ async def enter_end_date(message: Message, state: FSMContext):
             balance_1 = data.get('balance_1', 0)
             balance_2 = data.get('balance_2', 0)
             total_balance = balance_1 + balance_2
+            pure_income = data.get('pure_income', 0)
 
             await message.answer(
                 f"📊 <b>ПАНЕЛЬ АГЕНТСТВА</b>\n"
@@ -1506,7 +1511,8 @@ async def enter_end_date(message: Message, state: FSMContext):
                 f"💰 Выручка: <b>${data['revenue']:,.2f}</b>\n"
                 f"💸 Затраты: <b>${data['expenses']:,.2f}</b>\n"
                 f"📈 Прибыль: <b>${data['profit']:,.2f}</b>\n"
-                f"📊 Маржинальность: <b>{margin_pct:.1f}%</b>\n\n"
+                f"📊 Маржинальность: <b>{margin_pct:.1f}%</b>\n"
+                f"💵 Чистый доход: <b>${pure_income:,.2f}</b>\n\n"
                 f"💼 <b>Счета:</b>\n"
                 f"   Операционный: <b>${balance_1:,.2f}</b>\n"
                 f"   Резервный: <b>${balance_2:,.2f}</b>\n"
