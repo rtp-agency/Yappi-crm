@@ -2730,9 +2730,6 @@ class SheetsClient:
             # Read P&L data (B-E from row 13) - B=date, C=revenue, D=expenses, E=profit
             pl_data = await self.get_range("GENERAL", f"B{pl_config.start_row}:E500")
 
-            # Read data columns (G-O from row 9) - G=date, O=pure_income (index 8)
-            data_rows = await self.get_range("GENERAL", f"G{data_config.start_row}:O500")
-
             # Calculate date range based on period
             today = datetime.now()
 
@@ -2790,11 +2787,16 @@ class SheetsClient:
                         except (ValueError, TypeError):
                             continue
 
-            # Calculate pure income from data rows (column O = index 8)
+            # Calculate pure income from "Чистый доход" sheet (F=date, H=amount)
+            pure_income_config = get_sheet_config("pure_income")
+            pure_income_rows = await self.get_range(
+                pure_income_config.name,
+                f"F{pure_income_config.start_row}:H500"
+            )
             pure_income = 0
-            if data_rows:
-                for row in data_rows:
-                    if not row or len(row) < 1:
+            if pure_income_rows:
+                for row in pure_income_rows:
+                    if not row or len(row) < 3:
                         continue
 
                     row_date = str(row[0]).strip() if row[0] else ""
@@ -2813,9 +2815,9 @@ class SheetsClient:
                     else:
                         include_row = row_date in target_dates
 
-                    if include_row and len(row) > 8:
+                    if include_row:
                         try:
-                            pure_val = float(row[8]) if row[8] else 0
+                            pure_val = float(row[2]) if row[2] else 0  # Column H = index 2
                             pure_income += pure_val
                         except (ValueError, TypeError):
                             pass
@@ -2909,16 +2911,15 @@ class SheetsClient:
             data_config = get_config("general_data")
             tu_data = await self.get_range("GENERAL", f"T{data_config.start_row}:U100")
 
-            # Read column O to sum pure income
-            o_data = await self.get_range("GENERAL", f"O{data_config.start_row}:O500")
+            # Read pure income total from "Чистый доход" sheet (cell F4 has the sum formula)
+            pure_income_config = get_config("pure_income")
+            pure_income_total = await self.get_range(pure_income_config.name, "F4")
             pure_income = 0
-            if o_data:
-                for row in o_data:
-                    if row and row[0]:
-                        try:
-                            pure_income += float(row[0])
-                        except (ValueError, TypeError):
-                            pass
+            if pure_income_total and pure_income_total[0] and pure_income_total[0][0]:
+                try:
+                    pure_income = float(pure_income_total[0][0])
+                except (ValueError, TypeError):
+                    pass
 
             balance_1 = 0  # Operational account
             balance_2 = 0  # Reserve account
