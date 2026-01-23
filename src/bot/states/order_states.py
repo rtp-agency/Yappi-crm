@@ -125,3 +125,16 @@ class DateFilterStates(StatesGroup):
 
     # Step 2: Enter end date (DD.MM.YYYY)
     waiting_for_end_date = State()
+
+
+class DesignerSalaryStates(StatesGroup):
+    """States for paying salary to designer."""
+
+    # Step 1: Select designer
+    waiting_for_designer = State()
+
+    # Step 2: Enter amount
+    waiting_for_amount = State()
+
+    # Step 3: Confirm
+    waiting_for_confirmation = State()

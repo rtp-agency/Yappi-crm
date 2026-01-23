@@ -45,6 +45,7 @@ def get_add_data_menu() -> InlineKeyboardMarkup:
     - Чистый доход
     - Оплата от заказчика
     - Добавить заказчика/дизайнера/расход
+    - ЗП дизайнеру
     """
     builder = InlineKeyboardBuilder()
 
@@ -56,6 +57,9 @@ def get_add_data_menu() -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(text="💰 Оплата от заказчика", callback_data="add:payment")
+    )
+    builder.row(
+        InlineKeyboardButton(text="💵 ЗП дизайнеру", callback_data="add:designer_salary")
     )
     builder.row(
         InlineKeyboardButton(text="👤 Добавить заказчика", callback_data="add:client"),

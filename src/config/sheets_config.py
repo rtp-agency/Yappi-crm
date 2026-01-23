@@ -175,6 +175,20 @@ CATEGORIES = SheetConfig(
     ]
 )
 
+DESIGNER_SALARY = SheetConfig(
+    name="ЗП Дизайнерам",
+    id_column="A",
+    data_columns="F:H",  # F=дата, G=дизайнер, H=сумма
+    start_row=10,  # Данные начинаются с 10 строки
+    check_column="G",  # Проверяем по колонке G (дизайнер)
+    protected_columns=["B", "C", "D", "E"],  # Не трогаем
+    columns=[
+        "date",          # F - дата выплаты
+        "designer",      # G - ник дизайнера
+        "amount",        # H - сумма выплаты
+    ]
+)
+
 
 # ============================================================================
 # SHEETS REGISTRY
@@ -189,6 +203,7 @@ SHEETS_CONFIG: Dict[str, SheetConfig] = {
     "general_pl": GENERAL_PL,  # P&L секция (B-E, start_row=13)
     "general_data": GENERAL_DATA,  # Data секция (G-U, start_row=9)
     "categories": CATEGORIES,
+    "designer_salary": DESIGNER_SALARY,  # ЗП дизайнерам
 }
 
 

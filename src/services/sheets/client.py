@@ -2890,13 +2890,25 @@ class SheetsClient:
             profit = 0
             margin = 0
 
+            def safe_float(val):
+                """Convert value to float, return 0 for errors like #DIV/0!"""
+                if not val:
+                    return 0
+                val_str = str(val)
+                if val_str.startswith('#') or 'error' in val_str.lower():
+                    return 0
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    return 0
+
             if summary_data and len(summary_data) > 0:
                 row = summary_data[0]
                 # G4 is index 0, I4 is index 2, K4 is index 4, M4 is index 6
-                revenue = float(row[0]) if len(row) > 0 and row[0] else 0
-                expenses = float(row[2]) if len(row) > 2 and row[2] else 0
-                profit = float(row[4]) if len(row) > 4 and row[4] else 0
-                margin = float(row[6]) if len(row) > 6 and row[6] else 0
+                revenue = safe_float(row[0]) if len(row) > 0 else 0
+                expenses = safe_float(row[2]) if len(row) > 2 else 0
+                profit = safe_float(row[4]) if len(row) > 4 else 0
+                margin = safe_float(row[6]) if len(row) > 6 else 0
 
             # Read columns T and U to find last values (account balances)
             # T = Остаток на 1 счете (operational)

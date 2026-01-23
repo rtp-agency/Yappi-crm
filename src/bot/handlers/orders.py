@@ -16,7 +16,8 @@ from src.bot.states.order_states import (
     ExpenseStates,
     PureIncomeStates,
     AddClientStates,
-    AddDesignerStates
+    AddDesignerStates,
+    DesignerSalaryStates
 )
 from src.bot.keyboards.main_menu import (
     get_order_type_menu,
@@ -564,7 +565,7 @@ async def confirm_order(callback: CallbackQuery, state: FSMContext):
         data["designer"],                      # G: Ник дизайнера
         data["client"],                        # H: Ник заказчика
         data["amount"],                        # I: Стоимость заказа
-        data.get("percent", 0),               # J: % дизайнера
+        data.get("percent", 0) / 100,         # J: % дизайнера (0.5 = 50%)
         salary_value,                         # K: Оклад (0 для % модели)
     ]
 
@@ -1737,3 +1738,168 @@ async def add_designer_confirm(callback: CallbackQuery, state: FSMContext):
 
     await state.clear()
     await callback.answer()
+
+
+# ============================================================================
+# DESIGNER SALARY FLOW (ЗП дизайнеру)
+# ============================================================================
+
+def get_salary_designers_keyboard(designers: list[str]):
+    """Keyboard with designers for salary payment."""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    builder = InlineKeyboardBuilder()
+
+    for designer in designers[:20]:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"🎨 {designer}",
+                callback_data=f"salary_designer:{designer[:40]}"
+            )
+        )
+
+    builder.row(
+        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
+    )
+
+    return builder.as_markup()
+
+
+@router.callback_query(F.data == "add:designer_salary")
+async def add_designer_salary(callback: CallbackQuery, state: FSMContext):
+    """Start designer salary flow - show list of designers."""
+    await callback.message.edit_text(
+        "💵 <b>Выплата ЗП дизайнеру</b>\n\n"
+        "⏳ Загрузка списка дизайнеров...",
+        parse_mode="HTML"
+    )
+
+    try:
+        sheets = get_sheets_client()
+        await sheets.initialize()
+        designers = await sheets.get_all_designers()
+
+        if designers:
+            await callback.message.edit_text(
+                "💵 <b>Выплата ЗП дизайнеру</b>\n\n"
+                "Выберите <b>дизайнера</b>:",
+                reply_markup=get_salary_designers_keyboard(designers),
+                parse_mode="HTML"
+            )
+        else:
+            await callback.message.edit_text(
+                "💵 <b>Выплата ЗП дизайнеру</b>\n\n"
+                "❌ Дизайнеры не найдены.\n"
+                "Сначала добавьте дизайнера через меню.",
+                reply_markup=get_cancel_keyboard(),
+                parse_mode="HTML"
+            )
+
+    except Exception as e:
+        logger.error(f"Error loading designers for salary: {e}")
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка загрузки дизайнеров!</b>\n\n{str(e)}",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("salary_designer:"))
+async def salary_select_designer(callback: CallbackQuery, state: FSMContext):
+    """Designer selected - ask for amount."""
+    designer = callback.data.split(":", 1)[1]
+
+    await state.update_data(designer=designer)
+    await state.set_state(DesignerSalaryStates.waiting_for_amount)
+
+    await callback.message.edit_text(
+        f"💵 <b>Выплата ЗП дизайнеру</b>\n\n"
+        f"🎨 Дизайнер: <b>{designer}</b>\n\n"
+        "Введите <b>сумму выплаты</b> (в $):",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+@router.message(DesignerSalaryStates.waiting_for_amount)
+async def salary_enter_amount(message: Message, state: FSMContext):
+    """Amount entered - show confirmation."""
+    try:
+        amount = float(message.text.strip().replace(",", ".").replace("$", ""))
+        if amount <= 0:
+            raise ValueError("Amount must be positive")
+    except ValueError:
+        await message.answer("❌ Введите корректную сумму (число больше 0):")
+        return
+
+    data = await state.get_data()
+    await state.update_data(amount=amount)
+
+    await message.answer(
+        "📋 <b>ПОДТВЕРЖДЕНИЕ ВЫПЛАТЫ ЗП</b>\n\n"
+        f"🎨 Дизайнер: <b>{data['designer']}</b>\n"
+        f"💰 Сумма: <b>${amount:.2f}</b>\n"
+        f"📅 Дата: <b>{datetime.now().strftime('%d.%m.%Y')}</b>\n\n"
+        "Подтвердить выплату?",
+        reply_markup=get_confirm_keyboard(),
+        parse_mode="HTML"
+    )
+    await state.set_state(DesignerSalaryStates.waiting_for_confirmation)
+
+
+@router.callback_query(F.data == "confirm", DesignerSalaryStates.waiting_for_confirmation)
+async def salary_confirm(callback: CallbackQuery, state: FSMContext):
+    """Confirm and save salary payment to Google Sheets."""
+    data = await state.get_data()
+
+    operation_id = str(uuid.uuid4())
+    date_str = datetime.now().strftime("%d.%m.%Y")
+
+    # Salary data for "ЗП дизайнерам" sheet (columns F-H):
+    # F=date, G=designer, H=amount
+    salary_data = [
+        date_str,           # F - дата выплаты
+        data["designer"],   # G - ник дизайнера
+        data["amount"],     # H - сумма выплаты
+    ]
+
+    await callback.message.edit_text(
+        "⏳ Сохранение выплаты...",
+        parse_mode="HTML"
+    )
+
+    try:
+        client = get_sheets_client()
+        await client.initialize()
+
+        # Write to "ЗП дизайнерам" sheet
+        row_num = await client.write_row(
+            sheet_key="designer_salary",
+            operation_id=operation_id,
+            data=salary_data
+        )
+
+        logger.info(f"Designer salary saved: row={row_num}, designer={data['designer']}, amount={data['amount']}")
+
+        await state.clear()
+        await callback.message.edit_text(
+            "✅ <b>ВЫПЛАТА СОХРАНЕНА!</b>\n\n"
+            f"🎨 Дизайнер: {data['designer']}\n"
+            f"💰 Сумма: ${data['amount']:.2f}\n"
+            f"📅 Дата: {date_str}",
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        logger.error(f"Error saving designer salary: {e}")
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка сохранения!</b>\n\n{str(e)}",
+            parse_mode="HTML"
+        )
+        await state.clear()
+
+    await callback.answer("Выплата сохранена!")

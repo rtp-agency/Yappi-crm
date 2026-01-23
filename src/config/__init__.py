@@ -12,6 +12,7 @@ from src.config.sheets_config import (
     GENERAL_PL,
     GENERAL_DATA,
     CATEGORIES,
+    DESIGNER_SALARY,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "GENERAL_PL",
     "GENERAL_DATA",
     "CATEGORIES",
+    "DESIGNER_SALARY",
 ]
