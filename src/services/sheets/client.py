@@ -2351,12 +2351,12 @@ class SheetsClient:
         # Designer salary will be subtracted when actually paid (as separate expense).
 
         # Calculate T (operational wallet)
-        if wallet_operational > 0 or pure_income_amount > 0 or expense_amount > 0:
-            # wallet_operational contains the portion of agency income going to operational
-            # pure_income goes to operational by default (unless wallet_reserve is set)
-            pure_to_operational = pure_income_amount if wallet_reserve == 0 else 0
-            t_value = prev_t_balance + wallet_operational + pure_to_operational - expense_amount
-            logger.debug(f"T calculation: prev={prev_t_balance} + wallet_op={wallet_operational} + pure={pure_to_operational} - expense={expense_amount} = {t_value}")
+        if wallet_operational > 0 or expense_amount > 0:
+            # wallet_operational already contains the amount going to operational wallet
+            # (from pure_income with wallet selection, or from orders)
+            # Don't add pure_income_amount separately - it's already in wallet_operational
+            t_value = prev_t_balance + wallet_operational - expense_amount
+            logger.debug(f"T calculation: prev={prev_t_balance} + wallet_op={wallet_operational} - expense={expense_amount} = {t_value}")
         else:
             # No money flow to operational - keep previous balance
             t_value = prev_t_balance
