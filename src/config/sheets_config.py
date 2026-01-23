@@ -136,7 +136,7 @@ GENERAL_DATA = SheetConfig(
     name="GENERAL",
     id_column="A",
     data_columns="G:U",  # Data columns
-    start_row=9,  # Data данные начинаются с 9 строки
+    start_row=10,  # Data данные начинаются с 10 строки (row 9 = заголовки)
     check_column="G",  # Проверяем по колонке G (дата)
     protected_columns=[],
     columns=[

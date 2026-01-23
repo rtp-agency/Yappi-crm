@@ -2176,22 +2176,22 @@ class SheetsClient:
         - D = итоговые расходы
         - E = чистая прибыль
 
-        Data columns (G-U) from row 13:
-        - G = дата (DD.MM без года)
+        Data columns (G-U) from row 10:
+        - G = дата (DD.MM)
         - H = дизайнер
         - I = заказчик
         - J = сумма заказа
-        - K = фактическая оплата
-        - L = ЗП дизайнера
-        - M = доход агентства
+        - K = фактическая оплата заказа
+        - L = долг
+        - M = переплата
         - N = % дизайнера
-        - O = сумма чистого дохода
-        - P = (пусто)
-        - Q = сумма расхода
-        - R = тип операции
-        - S = (пусто)
-        - T = накопительный баланс (предыдущий T + profit)
-        - U = резервный кошелёк
+        - O = оклад дизайнера
+        - P = категория доп дохода
+        - Q = выручка с доп дохода
+        - R = категория текущих расходов
+        - S = сумма текущих расходов
+        - T = остаток на 1 счете (операционный)
+        - U = остаток на 2 счете (резервный)
 
         Row 4 formulas (FIXED range):
         - G4 = СУММ(C17:C1000) - сумма выручки
@@ -2381,10 +2381,10 @@ class SheetsClient:
             overpayment if overpayment > 0 else 0,           # M: переплата (0 if none)
             column_n,                                        # N: ЗП дизайнера (процентная модель)
             column_o,                                        # O: ЗП дизайнера (окладная модель) или 0
-            pure_income_category if pure_income_category else "",  # P: категория чистого дохода
-            pure_income_amount if pure_income_amount else "",  # Q: сумма чистого дохода
-            "",                                              # R: (пусто)
-            expense_amount if expense_amount else "",        # S: сумма расхода
+            pure_income_category if pure_income_category else "",  # P: категория доп дохода
+            pure_income_amount if pure_income_amount else "",  # Q: выручка с доп дохода
+            expense_category if expense_category else "",    # R: категория текущих расходов
+            expense_amount if expense_amount else "",        # S: сумма текущих расходов
             t_value,                                         # T: операционный кошелёк (накопительный)
             u_value                                          # U: резервный кошелёк (накопительный)
         ]
@@ -2395,7 +2395,7 @@ class SheetsClient:
         # Write P&L data to columns B-E (row 17+)
         await self.update_range("GENERAL", f"B{new_pl_row}:E{new_pl_row}", [pl_data])
 
-        # Write data to columns G-U (row 13+)
+        # Write data to columns G-U (row 10+)
         range_str = f"G{new_data_row}:U{new_data_row}"
 
         def _write():
